@@ -1,0 +1,20 @@
+<launch>
+  <arg name="mode" default="lidar"/>
+  <rosparam command="load" file="$(find entfac_fusion_ros)/config/semantic_pcl.yaml"/>
+
+  <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node" output="screen">
+    <param name="mode" value="$(arg mode)"/>
+    <param name="semantic_topic" value="/semantic/labels"/>
+    <param name="confidence_topic" value=""/>
+    <param name="camera_info" value="/camera/color/camera_info"/>
+    <param name="depth_topic" value="/camera/depth/image_rect_raw"/>
+    <param name="lidar_topic" value="/lidar/points"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="include_unlabeled_pts" value="false"/>
+
+    <!-- Optional static extrinsics; if unset TF is used -->
+    <!-- <rosparam param="static_target_T_depth">[1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]</rosparam> -->
+    <!-- <rosparam param="static_camera_T_lidar">[...16 values...]</rosparam> -->
+    <!-- <rosparam param="static_target_T_lidar">[...16 values...]</rosparam> -->
+  </node>
+</launch>

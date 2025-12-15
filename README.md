@@ -64,6 +64,7 @@ pcl = fuse_depth_semantics(
 - TF: looks up transforms from depth/LiDAR frame to `target_frame`, and from
   LiDAR frame to camera frame when in `lidar` mode.
   Static matrices override TF if provided; TF is resolved once at startup (URDF).
+- Conversions use numpy buffer parsing (no `ros_numpy`) for lower overhead.
 - Logging: core uses Python `logging`; ROS node logs via `rospy` (info for counts,
   warnings when TF/extrinsics are missing or no valid points are found).
 
@@ -77,9 +78,9 @@ pcl = fuse_depth_semantics(
 
 ## Dependencies
 - Python (core/tests): `numpy`, `pytest` (see `requirements.txt`).
-- ROS (wrappers): `rospy`, `sensor_msgs`, `tf2_ros`, `message_filters`, `cv_bridge`,
+- ROS (wrappers): `rospy`, `sensor_msgs`, `tf2_ros`, `message_filters`
   (declared in `entfac_fusion_ros/package.xml`).
-  Typical installs on Noetic: `sudo apt-get install ros-noetic-tf2-ros ros-noetic-message-filters ros-noetic-cv-bridge`.
+  Typical installs on Noetic: `sudo apt-get install ros-noetic-tf2-ros ros-noetic-message-filters`.
 
 ## Docker (core tests)
 ```bash
@@ -99,9 +100,9 @@ pytest -q
 - LiDAR projection assumes standard XYZ in sensor frame, compatible with common
   vendors (Ouster, Livox, Velodyne) once their drivers publish `PointCloud2`.
   Extrinsics can come from TF/URDF or static params for bag replay.
-- Potential bottlenecks: `ros_numpy` conversion and full-image meshgrid creation
-  in depth back-projection. These are acceptable for typical VGA/HD frames; for
-  higher resolutions consider downsampling upstream.
+- Potential bottlenecks: full-image meshgrid creation (now cached) and image
+  copies; for higher resolutions consider `downsample_factor` or upstream
+  downsampling.
 - LiDAR compatibility: projection expects XYZ in sensor frame; standard Ouster,
   Livox, and Velodyne ROS drivers publish `PointCloud2` in this form, so only
   extrinsics and intrinsics are required.
@@ -113,3 +114,4 @@ pytest -q
     big cores to avoid oversubscription.
   - Pin the node to a big core if needed (`taskset`) and keep labels single-channel
     to avoid extra copies.
+  - Downsampling uses stride slicing (nearest-neighbor), so labels remain valid.
