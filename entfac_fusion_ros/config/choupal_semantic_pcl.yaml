@@ -1,0 +1,17 @@
+# Choupal bag defaults
+semantic_topic: "/segmentation/test"
+confidence_topic: ""
+camera_info: "/realsense/aligned_depth_to_color/camera_info"
+depth_topic: ""                # unused (LiDAR mode)
+lidar_topic: "/livox/lidar"
+target_frame: "base_link"
+include_unlabeled_pts: false
+colorize_labels: true
+color_map: {}
+downsample_factor: 1
+enable_profiling: false
+
+# Optional static extrinsics (row-major 4x4). If empty, TF lookup is used.
+static_target_T_depth: []      # depth frame -> target frame
+static_camera_T_lidar: []      # lidar frame -> camera frame
+static_target_T_lidar: []      # lidar frame -> target frame

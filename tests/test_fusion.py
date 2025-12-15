@@ -4,12 +4,19 @@
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: MIT License (open source, free to modify and redistribute)
-# Repository: fruc_ros_utils
+# Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
 #   Unit tests for single-frame Sensor Fusion numpy core.
 
+import sys
+from pathlib import Path
+
 import numpy as np
+
+CORE_SRC = Path(__file__).resolve().parents[1] / "entfac_fusion_core" / "src"
+if str(CORE_SRC) not in sys.path:
+    sys.path.insert(0, str(CORE_SRC))
 
 from entfac_fusion_core.semantic_pcl import (
     fuse_depth_semantics,

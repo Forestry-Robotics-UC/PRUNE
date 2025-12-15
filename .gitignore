@@ -1,0 +1,19 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Python virtualenv
+.venv/
+venv/
+
+# pytest cache
+.pytest_cache/
+
+# ROS logs
+log/
+
+# catkin / colcon
+build/
+devel/
+install/
+.catkin_tools/

@@ -1,0 +1,19 @@
+<launch>
+  <arg name="bags_path" default="/bags"/>
+  <arg name="model" default="$(arg bags_path)/sensor-box.urdf"/>
+
+  <param name="robot_description" textfile="$(arg model)" />
+
+  <node pkg="robot_state_publisher"
+        type="robot_state_publisher"
+        name="robot_state_publisher"
+        output="screen">
+    <param name="publish_frequency" type="double" value="15.0"/>
+  </node>
+
+  <arg name="publish_world_map" default="false"/>
+  <group if="$(arg publish_world_map)">
+    <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+          args="0 0 0 0 0 0 1 world map"/>
+  </group>
+</launch>

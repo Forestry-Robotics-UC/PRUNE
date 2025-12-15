@@ -12,18 +12,14 @@ and temporal fusion live elsewhere.
 - Modes: depth-based fusion (RGB-D) and LiDAR projection fusion (LiDAR + camera).
 
 ## Repository Layout
-- `entfac_fusion_core/`: numpy-only, ROS-agnostic core.
-  - `types/`: dataclasses for per-frame data (`SemanticObservation`,
-    `DepthObservation`, `PointObservation`, `SemanticPointCloud`).
-  - `projection/`: depth back-projection, LiDAR→camera projection.
-  - `transforms/`: SE(3) helpers.
-  - `semantic_pcl/`: fusion pipelines (`fuse_depth_semantics`, `fuse_lidar_semantics`).
-  - `utils/`: validation utilities.
-- `entfac_fusion_ros/`: thin ROS wrappers.
+- `entfac_fusion_core/`: catkin Python package; numpy-only, ROS-agnostic core.
+  - Python sources live in `entfac_fusion_core/src/entfac_fusion_core/`.
+- `entfac_fusion_ros/`: catkin ROS wrapper package.
   - `nodes/semantic_pcl_node.py`: bridge topics to the core and publish
     `sensor_msgs/PointCloud2` with fields `x y z label [confidence]`.
   - `config/semantic_pcl.yaml`: default parameters with optional static extrinsics.
-  - `launch/semantic_pcl.launch`: example launch for LiDAR mode.
+  - `launch/semantic_pcl.launch`: generic launch (optional image_transport republish).
+  - `launch/choupal_semantic_pcl.launch`: Choupal bag demo (bag play + TF + republish).
 - `tests/`: pytest coverage for core fusion paths.
 
 ## Core Usage (numpy)
@@ -56,6 +52,7 @@ pcl = fuse_depth_semantics(
   - Mode auto-detected from the provided topics (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
+  - `~colorize_labels`: add an `rgb` field based on label IDs (default false).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~enable_profiling`: cProfile summary per callback (off by default).
   - Extrinsics: provide static 4×4 matrices (`~static_target_T_depth`,
@@ -79,15 +76,41 @@ pcl = fuse_depth_semantics(
 
 ## Dependencies
 - Python (core/tests): `numpy`, `pytest` (see `requirements.txt`).
-- ROS (wrappers): `rospy`, `sensor_msgs`, `tf2_ros`, `message_filters`
-  (declared in `entfac_fusion_ros/package.xml`).
-  Typical installs on Noetic: `sudo apt-get install ros-noetic-tf2-ros ros-noetic-message-filters`.
+- ROS (wrappers): see `entfac_fusion_core/package.xml` and `entfac_fusion_ros/package.xml`.
+  Recommended:
+  - `rosdep update`
+  - `rosdep install --from-paths src --ignore-src -r -y`
 
 ## Docker (core tests)
 ```bash
-docker build -t entfac-sensor-fusion .
+docker build -t entfac-sensor-fusion -f Docker/entfac-sensor-fusion.Dockerfile .
 docker run --rm entfac-sensor-fusion
 ```
+
+## Docker (ROS)
+- Run with bags mounted (edit `docker-compose.yml` as needed):
+  ```bash
+  docker compose run --rm sensor-fusion-ros
+  # inside:
+  source /opt/ros/noetic/setup.bash
+  rosdep update
+  rosdep install --from-paths src --ignore-src -r -y
+  catkin_make
+  source devel/setup.bash
+  roslaunch entfac_fusion_ros choupal_semantic_pcl.launch
+  ```
+  Bags are available under `/bags`.
+
+## Docker (ROS + GUI / RViz)
+- Optional X11-forwarding service for debugging GUI tools (RViz, rqt) from inside the container:
+  ```bash
+  xhost +si:localuser:$(whoami)
+  docker compose run --rm sensor-fusion-ros-gui
+  # inside:
+  rviz
+  ```
+  To revoke access: `xhost -si:localuser:$(whoami)`.
+  If `rviz` is not installed in your image, install `ros-noetic-rviz` (or run RViz on the host).
 
 ## Testing
 ```bash
@@ -100,6 +123,15 @@ pytest -q
   ```bash
   roslaunch entfac_fusion_ros semantic_pcl.launch
   ```
+- To decompress compressed topics, set `use_republish:=true` and provide base input topics (no `/compressed` suffix), e.g. `semantic_in_topic:=/segmentation/test`.
+- Choupal bag example (plays bags, republishes `/segmentation/test` from compressed, and loads TF from `/bags/sensor-box.urdf`):
+  ```bash
+  roslaunch entfac_fusion_ros choupal_semantic_pcl.launch
+  ```
+- Param precedence: YAML loaded via `rosparam` sets defaults; later `<param>` tags override. Avoid setting empty-string params in launch files since they overwrite YAML.
+
+## Semantic colors
+- If the semantic topic is a 3-channel color image, set `semantic_pcl_node/color_map` so the node can convert colors back to label IDs.
 
 ## Notes on design and performance
 - Separation of core vs. ROS keeps the math testable without ROS, and supports

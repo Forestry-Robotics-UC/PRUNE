@@ -4,7 +4,7 @@
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: MIT License (open source, free to modify and redistribute)
-# Repository: fruc_ros_utils
+# Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
 #   Numpy-only dataclasses describing per-frame semantic and geometric observations.

@@ -1,10 +1,12 @@
 semantic_topic: "/semantic/labels"
 confidence_topic: ""          # optional
 camera_info: "/camera/color/camera_info"
-depth_topic: "/camera/depth/image_rect_raw"  # used when mode=depth
-lidar_topic: "/lidar/points"                 # used when mode=lidar
+depth_topic: "/camera/depth/image_rect_raw"  # depth mode; leave empty to prefer LiDAR
+lidar_topic: "/lidar/points"                 # LiDAR mode; leave empty to prefer depth
 target_frame: "base_link"
 include_unlabeled_pts: false
+colorize_labels: false        # add PointCloud2 rgb field
+color_map: {}                 # optional: {label_id: [r,g,b], ...} for coloring + color->label decode
 downsample_factor: 1           # integer >=1; higher saves CPU
 enable_profiling: false
 
