@@ -48,11 +48,12 @@ pcl = fuse_depth_semantics(
 
 ## ROS Node (`semantic_pcl_node.py`)
 - Parameters:
-  - `~mode`: `depth` (aligned depth image) or `lidar` (project LiDAR into image).
   - `~semantic_topic`: single-channel semantic labels (Image).
   - `~confidence_topic` (optional): confidence image aligned to semantic labels.
   - `~camera_info`: CameraInfo for intrinsics + frame id.
-  - `~depth_topic` (depth mode) or `~lidar_topic` (lidar mode).
+  - `~depth_topic`: (Image) used for depth fusion if provided.
+  - `~lidar_topic`: (PointCloud2) used for LiDAR fusion if provided.
+  - Mode auto-detected from the provided topics (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
@@ -92,6 +93,13 @@ docker run --rm entfac-sensor-fusion
 ```bash
 pytest -q
 ```
+
+## ROS launch
+- Build your workspace, source setup, set topics/extrinsics in `entfac_fusion_ros/config/semantic_pcl.yaml`.
+- Launch (auto-detects depth vs. LiDAR based on the provided topics):
+  ```bash
+  roslaunch entfac_fusion_ros semantic_pcl.launch
+  ```
 
 ## Notes on design and performance
 - Separation of core vs. ROS keeps the math testable without ROS, and supports

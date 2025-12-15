@@ -15,6 +15,7 @@ import cProfile
 import io
 import pstats
 from contextlib import contextmanager
+import rostopic
 
 import numpy as np
 import rospy
@@ -107,10 +108,7 @@ class SemanticPclNode:
 
     def __init__(self):
         # 'depth' uses aligned depth image; 'lidar' projects LiDAR into image.
-        self.mode = rospy.get_param("~mode", "depth").lower()
-        if self.mode not in ("depth", "lidar"):
-            raise ValueError("~mode must be 'depth' or 'lidar'")
-
+        self.mode = rospy.get_param("~mode", "").lower()
         self.target_frame = rospy.get_param("~target_frame", "base_link")
         self.semantic_topic = rospy.get_param("~semantic_topic")
         self.conf_topic = rospy.get_param("~confidence_topic", "")
@@ -144,6 +142,9 @@ class SemanticPclNode:
         self.target_T_depth = None
         self.camera_T_lidar = None
         self.target_T_lidar = None
+        if self.mode not in ("depth", "lidar"):
+            self.mode = self._detect_mode()
+            rospy.loginfo("Auto-detected mode=%s", self.mode)
         self._prime_transforms()
 
         self._register_subscribers()
@@ -155,7 +156,7 @@ class SemanticPclNode:
 
         if self.mode == "depth":
             if not self.depth_topic:
-                raise ValueError("~depth_topic is required for depth mode")
+                raise ValueError("depth mode requires ~depth_topic")
             depth_sub = Subscriber(self.depth_topic, Image, queue_size=1)
             subs = [color_sub, depth_sub]
             if self.conf_topic:
@@ -167,7 +168,7 @@ class SemanticPclNode:
             self.ts.registerCallback(self._depth_callback)
         else:
             if not self.lidar_topic:
-                raise ValueError("~lidar_topic is required for lidar mode")
+                raise ValueError("lidar mode requires ~lidar_topic")
             lidar_sub = Subscriber(self.lidar_topic, PointCloud2, queue_size=1)
             subs = [color_sub, lidar_sub]
             if self.conf_topic:
@@ -197,6 +198,28 @@ class SemanticPclNode:
         except Exception as exc:  # noqa: BLE001
             rospy.logwarn("Timeout waiting for %s: %s", topic, exc)
             return None
+
+    def _detect_mode(self):
+        """Detect mode based on configured topics' message types."""
+        mode = None
+        if self.depth_topic:
+            cls, _, _ = rostopic.get_topic_class(self.depth_topic, blocking=False)
+            if cls is not None and issubclass(cls, Image):
+                mode = "depth"
+        if self.lidar_topic:
+            cls, _, _ = rostopic.get_topic_class(self.lidar_topic, blocking=False)
+            if cls is not None and issubclass(cls, PointCloud2):
+                if mode and mode != "lidar":
+                    rospy.logwarn(
+                        "Both depth and lidar topics valid; defaulting to depth"
+                    )
+                else:
+                    mode = "lidar"
+        if mode is None:
+            raise ValueError(
+                "Unable to auto-detect mode; set ~depth_topic or ~lidar_topic"
+            )
+        return mode
 
     def _load_matrix_param(self, name):
         """Load a 4x4 matrix parameter if provided."""
