@@ -327,11 +327,16 @@ class SemanticPclNode:
         self._logdebug(
             "__init__", "Waiting for CameraInfo on topic=%s", self.camera_info_topic
         )
-        cam_info = self._wait_for_msg(self.camera_info_topic, CameraInfo, timeout=None)
-        if cam_info is None:
-            raise RuntimeError(
-                f"Timed out waiting for CameraInfo: {self.camera_info_topic}"
+        cam_info = None
+        while cam_info is None and not rospy.is_shutdown():
+            cam_info = self._wait_for_msg(
+                self.camera_info_topic,
+                CameraInfo,
+                timeout=1.0,
+                warn_on_timeout=False,
             )
+        if cam_info is None:
+            raise rospy.ROSInterruptException("Shutdown while waiting for CameraInfo")
         self.intrinsics = np.asarray(cam_info.K, dtype=float).reshape(3, 3)
         self.camera_frame = cam_info.header.frame_id
         self._logdebug(
