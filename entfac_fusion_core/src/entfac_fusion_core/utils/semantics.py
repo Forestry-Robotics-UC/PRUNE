@@ -13,9 +13,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Tuple
 
 import numpy as np
+
+LOGGER = logging.getLogger(__name__)
 
 
 def unique_label_ids(
@@ -84,10 +87,13 @@ def count_semantic_groups(semantic: np.ndarray) -> Tuple[str, int]:
     """
     semantic = np.asarray(semantic)
     if semantic.ndim == 2:
-        return "labels", count_unique_labels(semantic)
+        count = count_unique_labels(semantic)
+        LOGGER.debug("count_semantic_groups: labels=%d", count)
+        return "labels", count
     if semantic.ndim == 3 and semantic.shape[2] in (3, 4):
-        return "colors", count_unique_colors(semantic[:, :, :3])
+        count = count_unique_colors(semantic[:, :, :3])
+        LOGGER.debug("count_semantic_groups: colors=%d", count)
+        return "colors", count
     raise ValueError(
         f"semantic must be (H,W) labels or (H,W,3/4) colors, got shape {semantic.shape}"
     )
-

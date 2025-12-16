@@ -13,9 +13,11 @@
 
 import cProfile
 import io
+import logging
 import pstats
 import struct
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -48,6 +50,51 @@ from entfac_fusion_core.types import (
 )
 from entfac_fusion_core.utils.validation import require_homogeneous_transform
 from entfac_fusion_core.utils.semantics import count_semantic_groups
+
+
+class _RospyLogHandler(logging.Handler):
+    """Forward Python logging records into rospy logging with node prefix."""
+
+    def __init__(self, node_name):
+        super().__init__()
+        self._node_name = str(node_name).lstrip("/")
+        self._local = threading.local()
+
+    def emit(self, record):
+        if getattr(self._local, "in_emit", False):
+            return
+        self._local.in_emit = True
+        try:
+            msg = self.format(record)
+            tag = f"{self._node_name}:{record.name}.{record.funcName}"
+            full = f"[{tag}] {msg}"
+            if record.levelno >= logging.ERROR:
+                rospy.logerr(full)
+            elif record.levelno >= logging.WARNING:
+                rospy.logwarn(full)
+            elif record.levelno >= logging.INFO:
+                rospy.loginfo(full)
+            else:
+                rospy.logdebug(full)
+        finally:
+            self._local.in_emit = False
+
+
+def _configure_core_logging(node_name, debug):
+    """Route entfac_fusion_core logs through rospy with node context."""
+    logger = logging.getLogger("entfac_fusion_core")
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    handler = _RospyLogHandler(node_name)
+    handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    # Avoid duplicate handlers when a node gets restarted.
+    for existing in list(logger.handlers):
+        if isinstance(existing, _RospyLogHandler):
+            logger.removeHandler(existing)
+    logger.addHandler(handler)
+    logger.propagate = False
 
 
 def transform_stamped_to_matrix(transform_stamped):
@@ -171,6 +218,7 @@ class SemanticPclNode:
             False,
             "Enable debug parameter report at startup (and DEBUG logs if set via launch arg).",
         )
+        _configure_core_logging(self._node_name, self.debug)
 
         # 'depth' uses aligned depth image; 'lidar' projects LiDAR points into the image.
         self.mode = self._get_param_str(
@@ -276,9 +324,27 @@ class SemanticPclNode:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        cam_info = rospy.wait_for_message(self.camera_info_topic, CameraInfo)
+        self._logdebug(
+            "__init__", "Waiting for CameraInfo on topic=%s", self.camera_info_topic
+        )
+        cam_info = self._wait_for_msg(self.camera_info_topic, CameraInfo, timeout=None)
+        if cam_info is None:
+            raise RuntimeError(
+                f"Timed out waiting for CameraInfo: {self.camera_info_topic}"
+            )
         self.intrinsics = np.asarray(cam_info.K, dtype=float).reshape(3, 3)
         self.camera_frame = cam_info.header.frame_id
+        self._logdebug(
+            "__init__",
+            "CameraInfo received: frame_id=%s stamp=%.6f",
+            self.camera_frame,
+            cam_info.header.stamp.to_sec(),
+        )
+        self._logdebug(
+            "__init__",
+            "Intrinsics K=\n%s",
+            np.array2string(self.intrinsics, precision=4, suppress_small=True),
+        )
         self.pcl_pub = rospy.Publisher(
             "semantic_pointcloud", PointCloud2, queue_size=1
         )
@@ -440,9 +506,51 @@ class SemanticPclNode:
             self.camera_T_lidar is not None,
             self.target_T_lidar is not None,
         )
+        if self.target_T_depth is not None:
+            self._loginfo(
+                "_log_param_report",
+                "target_T_depth=\n%s",
+                np.array2string(
+                    self.target_T_depth, precision=4, suppress_small=True
+                ),
+            )
+        if self.camera_T_lidar is not None:
+            self._loginfo(
+                "_log_param_report",
+                "camera_T_lidar=\n%s",
+                np.array2string(
+                    self.camera_T_lidar, precision=4, suppress_small=True
+                ),
+            )
+        if self.target_T_lidar is not None:
+            self._loginfo(
+                "_log_param_report",
+                "target_T_lidar=\n%s",
+                np.array2string(
+                    self.target_T_lidar, precision=4, suppress_small=True
+                ),
+            )
+
+        color_map_len = len(self.color_map) if self.color_map else 0
+        self._loginfo(
+            "_log_param_report",
+            "semantic palette decode: color_map_entries=%d auto_color_to_label=%s extend=%s",
+            color_map_len,
+            self.auto_color_to_label,
+            self.auto_color_to_label_extend,
+        )
 
     def _register_subscribers(self):
         """Setup message_filters synchronizer."""
+        self._logdebug(
+            "_register_subscribers",
+            "Registering subscribers (mode=%s): semantic=%s depth=%s lidar=%s confidence=%s",
+            self.mode,
+            self.semantic_topic,
+            self.depth_topic,
+            self.lidar_topic,
+            self.conf_topic,
+        )
         color_sub = Subscriber(self.semantic_topic, Image, queue_size=1)
 
         if self.mode == "depth":
@@ -471,11 +579,26 @@ class SemanticPclNode:
             self.ts.registerCallback(self._lidar_callback)
 
     def _lookup_transform(self, target_frame, source_frame, stamp):
+        self._logdebug(
+            "_lookup_transform",
+            "Looking up TF %s -> %s (stamp=%.6f)",
+            source_frame,
+            target_frame,
+            stamp.to_sec() if hasattr(stamp, "to_sec") else 0.0,
+        )
         try:
             tf_msg = self.tf_buffer.lookup_transform(
                 target_frame, source_frame, stamp, rospy.Duration(0.2)
             )
-            return transform_stamped_to_matrix(tf_msg)
+            mat = transform_stamped_to_matrix(tf_msg)
+            self._logdebug(
+                "_lookup_transform",
+                "TF %s -> %s:\n%s",
+                source_frame,
+                target_frame,
+                np.array2string(mat, precision=4, suppress_small=True),
+            )
+            return mat
         except tf2_ros.TransformException as ex:
             self._logwarn(
                 "_lookup_transform",
@@ -483,17 +606,49 @@ class SemanticPclNode:
             )
             return None
 
-    def _wait_for_msg(self, topic, msg_type, timeout=2.0):
+    def _wait_for_msg(self, topic, msg_type, timeout=2.0, warn_on_timeout=True):
+        if not topic:
+            return None
+        timeout_str = "None" if timeout is None else f"{float(timeout):.2f}s"
+        self._logdebug(
+            "_wait_for_msg",
+            "Waiting for %s on topic=%s (timeout=%s)",
+            msg_type.__name__,
+            topic,
+            timeout_str,
+        )
         try:
-            return rospy.wait_for_message(topic, msg_type, timeout=timeout)
+            msg = rospy.wait_for_message(topic, msg_type, timeout=timeout)
+            self._logdebug(
+                "_wait_for_msg",
+                "Received %s on topic=%s (stamp=%.6f frame_id=%s)",
+                msg_type.__name__,
+                topic,
+                msg.header.stamp.to_sec() if hasattr(msg, "header") else 0.0,
+                msg.header.frame_id if hasattr(msg, "header") else "",
+            )
+            return msg
         except Exception as exc:  # noqa: BLE001
-            self._logwarn("_wait_for_msg", "Timeout waiting for %s: %s", topic, exc)
+            if warn_on_timeout:
+                self._logwarn(
+                    "_wait_for_msg", "Timeout waiting for %s: %s", topic, exc
+                )
+            else:
+                self._logdebug(
+                    "_wait_for_msg", "Timeout waiting for %s: %s", topic, exc
+                )
             return None
 
     def _detect_mode(self):
         """Detect mode based on configured topics' message types."""
         depth_set = bool(self.depth_topic)
         lidar_set = bool(self.lidar_topic)
+        self._logdebug(
+            "_detect_mode",
+            "Detecting mode from topics: depth_topic=%s lidar_topic=%s",
+            self.depth_topic,
+            self.lidar_topic,
+        )
 
         if depth_set and not lidar_set:
             return "depth"
@@ -503,10 +658,17 @@ class SemanticPclNode:
             raise ValueError("Set ~depth_topic and/or ~lidar_topic")
 
         # Both are configured: wait briefly for first message to decide.
-        if self._wait_for_msg(self.depth_topic, Image, timeout=0.2) is not None:
+        if (
+            self._wait_for_msg(
+                self.depth_topic, Image, timeout=0.2, warn_on_timeout=False
+            )
+            is not None
+        ):
             return "depth"
         if (
-            self._wait_for_msg(self.lidar_topic, PointCloud2, timeout=0.2)
+            self._wait_for_msg(
+                self.lidar_topic, PointCloud2, timeout=0.2, warn_on_timeout=False
+            )
             is not None
         ):
             return "lidar"
@@ -706,26 +868,71 @@ class SemanticPclNode:
     def _prime_transforms(self):
         """Resolve extrinsics once at startup (TF preferred, static fallback)."""
         if self.mode == "depth":
-            depth_msg = self._wait_for_msg(self.depth_topic, Image)
+            self._logdebug("_prime_transforms", "Priming depth transforms")
+            depth_msg = self._wait_for_msg(
+                self.depth_topic, Image, timeout=5.0, warn_on_timeout=False
+            )
             depth_frame = depth_msg.header.frame_id if depth_msg else None
             if self.static_target_T_depth is not None:
                 self.target_T_depth = self.static_target_T_depth
+                self._logdebug(
+                    "_prime_transforms",
+                    "Using static target_T_depth:\n%s",
+                    np.array2string(
+                        self.target_T_depth, precision=4, suppress_small=True
+                    ),
+                )
             elif depth_frame:
+                self._logdebug(
+                    "_prime_transforms",
+                    "Looking up depth->target TF: %s -> %s",
+                    depth_frame,
+                    self.target_frame,
+                )
                 self.target_T_depth = self._lookup_transform(
                     self.target_frame, depth_frame, rospy.Time(0)
                 )
         else:
-            lidar_msg = self._wait_for_msg(self.lidar_topic, PointCloud2)
+            self._logdebug("_prime_transforms", "Priming LiDAR transforms")
+            lidar_msg = self._wait_for_msg(
+                self.lidar_topic, PointCloud2, timeout=5.0, warn_on_timeout=False
+            )
             lidar_frame = lidar_msg.header.frame_id if lidar_msg else None
             if self.static_camera_T_lidar is not None:
                 self.camera_T_lidar = self.static_camera_T_lidar
+                self._logdebug(
+                    "_prime_transforms",
+                    "Using static camera_T_lidar:\n%s",
+                    np.array2string(
+                        self.camera_T_lidar, precision=4, suppress_small=True
+                    ),
+                )
             elif lidar_frame:
+                self._logdebug(
+                    "_prime_transforms",
+                    "Looking up lidar->camera TF: %s -> %s",
+                    lidar_frame,
+                    self.camera_frame,
+                )
                 self.camera_T_lidar = self._lookup_transform(
                     self.camera_frame, lidar_frame, rospy.Time(0)
                 )
             if self.static_target_T_lidar is not None:
                 self.target_T_lidar = self.static_target_T_lidar
+                self._logdebug(
+                    "_prime_transforms",
+                    "Using static target_T_lidar:\n%s",
+                    np.array2string(
+                        self.target_T_lidar, precision=4, suppress_small=True
+                    ),
+                )
             elif lidar_frame:
+                self._logdebug(
+                    "_prime_transforms",
+                    "Looking up lidar->target TF: %s -> %s",
+                    lidar_frame,
+                    self.target_frame,
+                )
                 self.target_T_lidar = self._lookup_transform(
                     self.target_frame, lidar_frame, rospy.Time(0)
                 )
@@ -826,11 +1033,28 @@ class SemanticPclNode:
             )
             target_T_depth = self.target_T_depth
             if target_T_depth is None:
-                self._logdebug(
-                    "_depth_callback",
-                    "Skipping frame: missing depth->target transform",
-                )
-                return
+                depth_frame = depth_msg.header.frame_id
+                if depth_frame:
+                    self._logdebug(
+                        "_depth_callback",
+                        "Priming depth->target transform on first callback (%s -> %s)",
+                        depth_frame,
+                        self.target_frame,
+                    )
+                    self.target_T_depth = self._lookup_transform(
+                        self.target_frame, depth_frame, rospy.Time(0)
+                    )
+                    target_T_depth = self.target_T_depth
+                    if target_T_depth is not None:
+                        self._loginfo(
+                            "_depth_callback", "Primed depth->target transform"
+                        )
+                if target_T_depth is None:
+                    self._logdebug(
+                        "_depth_callback",
+                        "Skipping frame: missing depth->target transform",
+                    )
+                    return
 
             labels = self._parse_semantic(sem_msg)
             depth = self._image_to_numpy(depth_msg).astype(float)
@@ -877,11 +1101,46 @@ class SemanticPclNode:
             camera_T_lidar = self.camera_T_lidar
             target_T_lidar = self.target_T_lidar
             if camera_T_lidar is None or target_T_lidar is None:
-                self._logdebug(
-                    "_lidar_callback",
-                    "Skipping frame: missing LiDAR transforms",
-                )
-                return
+                lidar_frame = lidar_msg.header.frame_id
+                if lidar_frame:
+                    if camera_T_lidar is None:
+                        self._logdebug(
+                            "_lidar_callback",
+                            "Priming lidar->camera transform on first callback (%s -> %s)",
+                            lidar_frame,
+                            self.camera_frame,
+                        )
+                        self.camera_T_lidar = self._lookup_transform(
+                            self.camera_frame, lidar_frame, rospy.Time(0)
+                        )
+                        camera_T_lidar = self.camera_T_lidar
+                        if camera_T_lidar is not None:
+                            self._loginfo(
+                                "_lidar_callback", "Primed lidar->camera transform"
+                            )
+                    if target_T_lidar is None:
+                        self._logdebug(
+                            "_lidar_callback",
+                            "Priming lidar->target transform on first callback (%s -> %s)",
+                            lidar_frame,
+                            self.target_frame,
+                        )
+                        self.target_T_lidar = self._lookup_transform(
+                            self.target_frame, lidar_frame, rospy.Time(0)
+                        )
+                        target_T_lidar = self.target_T_lidar
+                        if target_T_lidar is not None:
+                            self._loginfo(
+                                "_lidar_callback", "Primed lidar->target transform"
+                            )
+                camera_T_lidar = self.camera_T_lidar
+                target_T_lidar = self.target_T_lidar
+                if camera_T_lidar is None or target_T_lidar is None:
+                    self._logdebug(
+                        "_lidar_callback",
+                        "Skipping frame: missing LiDAR transforms",
+                    )
+                    return
 
             labels = self._parse_semantic(sem_msg)
             confidence = (

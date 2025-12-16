@@ -39,6 +39,12 @@ def fuse_depth_semantics(
     include_unlabeled: bool = False,
 ) -> SemanticPointCloud:
     """Fuse aligned semantic + depth into a semantic point cloud in target frame."""
+    LOGGER.debug(
+        "fuse_depth_semantics: labels=%s depth=%s include_unlabeled=%s",
+        semantic.labels.shape,
+        depth.depth.shape,
+        include_unlabeled,
+    )
     semantic.validate()
     depth.validate()
     target_T_depth = require_homogeneous_transform(target_T_depth)
@@ -91,6 +97,12 @@ def fuse_lidar_semantics(
     include_unlabeled: bool = False,
 ) -> SemanticPointCloud:
     """Project LiDAR into image, sample semantics, and emit semantic point cloud."""
+    LOGGER.debug(
+        "fuse_lidar_semantics: labels=%s points=%s include_unlabeled=%s",
+        semantic.labels.shape,
+        lidar_points.points_xyz.shape,
+        include_unlabeled,
+    )
     semantic.validate()
     lidar_points.validate()
     camera_T_lidar = require_homogeneous_transform(camera_T_lidar)
