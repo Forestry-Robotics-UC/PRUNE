@@ -47,6 +47,7 @@ from entfac_fusion_core.types import (
     SemanticObservation,
 )
 from entfac_fusion_core.utils.validation import require_homogeneous_transform
+from entfac_fusion_core.utils.semantics import count_semantic_groups
 
 
 def transform_stamped_to_matrix(transform_stamped):
@@ -227,7 +228,20 @@ class SemanticPclNode:
             "~color_map",
             "Optional dict {label_id: [r,g,b]} used for coloring and for color->label decode when semantic images are RGB.",
         )
+        self.auto_color_to_label = self._get_param_bool(
+            "~auto_color_to_label",
+            False,
+            "If true and semantic images are RGB/BGR, build a deterministic color->label mapping from observed colors.",
+        )
+        self.auto_color_to_label_extend = self._get_param_bool(
+            "~auto_color_to_label_extend",
+            True,
+            "If true (auto decode only), extend the color->label mapping when new colors appear in later frames.",
+        )
         self._inverse_color_map = None
+        self._packed_to_label = None
+        self._auto_color_decode = False
+        self._warned_unknown_colors = False
         self.downsample_factor = self._get_param_int(
             "~downsample_factor",
             1,
@@ -529,6 +543,82 @@ class SemanticPclNode:
         labels_flat[valid] = labels_sorted[idx[valid]]
         return labels_flat.reshape(packed.shape)
 
+    def _set_color_decoder_from_color_map(self):
+        self._inverse_color_map = self._build_inverse_color_map(self.color_map)
+        keys_sorted, labels_sorted = self._inverse_color_map
+        self._packed_to_label = {
+            int(k): int(v) for k, v in zip(keys_sorted.tolist(), labels_sorted.tolist())
+        }
+        self._auto_color_decode = False
+
+    def _set_auto_color_decoder_from_packed(self, packed):
+        unique = np.unique(packed.reshape(-1).astype(np.uint32))
+        if unique.size > 65535:
+            raise ValueError(
+                f"auto_color_to_label found {unique.size} unique colors; exceeds uint16 label range"
+            )
+        labels_sorted = np.arange(unique.size, dtype=np.int32)
+        self._inverse_color_map = (unique, labels_sorted)
+        self._packed_to_label = {int(k): int(i) for i, k in enumerate(unique.tolist())}
+        self._auto_color_decode = True
+
+        # Also populate color_map so output can reproduce the palette.
+        self.color_map = {}
+        for label_id, packed_val in enumerate(unique.tolist()):
+            r = (packed_val >> 16) & 0xFF
+            g = (packed_val >> 8) & 0xFF
+            b = packed_val & 0xFF
+            self.color_map[int(label_id)] = [int(r), int(g), int(b)]
+
+        self._loginfo(
+            "_set_auto_color_decoder_from_packed",
+            "Auto color->label mapping: %d unique colors mapped to labels 0..%d (sorted by packed RGB).",
+            int(unique.size),
+            int(unique.size - 1),
+        )
+
+    def _extend_auto_color_decoder(self, packed, labels):
+        if not self._auto_color_decode or not self.auto_color_to_label_extend:
+            return labels
+        unknown_mask = labels == -1
+        if not np.any(unknown_mask):
+            return labels
+
+        unknown = np.unique(packed[unknown_mask].reshape(-1).astype(np.uint32))
+        if unknown.size == 0:
+            return labels
+
+        next_id = len(self._packed_to_label)
+        if next_id + unknown.size > 65535:
+            raise ValueError(
+                f"auto_color_to_label would exceed uint16 label range after adding {unknown.size} new colors"
+            )
+
+        for packed_val in unknown.tolist():
+            if int(packed_val) in self._packed_to_label:
+                continue
+            self._packed_to_label[int(packed_val)] = int(next_id)
+            r = (int(packed_val) >> 16) & 0xFF
+            g = (int(packed_val) >> 8) & 0xFF
+            b = int(packed_val) & 0xFF
+            self.color_map[int(next_id)] = [int(r), int(g), int(b)]
+            next_id += 1
+
+        keys_sorted = np.asarray(sorted(self._packed_to_label.keys()), dtype=np.uint32)
+        labels_sorted = np.asarray(
+            [self._packed_to_label[int(k)] for k in keys_sorted.tolist()],
+            dtype=np.int32,
+        )
+        self._inverse_color_map = (keys_sorted, labels_sorted)
+
+        self._logwarn(
+            "_extend_auto_color_decoder",
+            "Extended auto color->label mapping with %d new colors (total=%d).",
+            int(unknown.size),
+            int(len(self._packed_to_label)),
+        )
+        return self._packed_color_to_label(packed, self._inverse_color_map)
+
     @staticmethod
     def _scale_intrinsics(intrinsics, factor):
         scaled = intrinsics.copy()
@@ -665,35 +755,67 @@ class SemanticPclNode:
         encoding = msg.encoding.lower()
 
         if data.ndim == 3:
-            if self.color_map is None:
-                raise ValueError(
-                    "3-channel semantic image requires ~color_map (label -> [r,g,b]) "
-                    "to convert colors back to label IDs"
-                )
             if self._inverse_color_map is None:
-                self._inverse_color_map = self._build_inverse_color_map(self.color_map)
+                if self.color_map is not None:
+                    self._set_color_decoder_from_color_map()
+                elif self.auto_color_to_label:
+                    kind, count = count_semantic_groups(data[:, :, :3])
+                    self._logwarn(
+                        "_parse_semantic",
+                        "RGB semantic image detected (%s=%d). No ~color_map provided; using auto_color_to_label mapping. "
+                        "Provide ~color_map for stable class IDs.",
+                        kind,
+                        int(count),
+                    )
+                    self._set_auto_color_decoder_from_packed(
+                        self._rgb_to_packed(data, encoding)
+                    )
+                else:
+                    raise ValueError(
+                        "3-channel semantic image requires either ~color_map (label -> [r,g,b]) "
+                        "or ~auto_color_to_label:=true to infer a mapping from the palette"
+                    )
 
-            if encoding == "bgr8":
-                b, g, r = data[:, :, 0], data[:, :, 1], data[:, :, 2]
-            elif encoding == "rgb8":
-                r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
-            elif encoding == "bgra8":
-                b, g, r = data[:, :, 0], data[:, :, 1], data[:, :, 2]
-            elif encoding == "rgba8":
-                r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
-            else:
-                raise ValueError(f"Unsupported 3-channel encoding: {msg.encoding}")
+            packed = self._rgb_to_packed(data, encoding)
+            labels = self._packed_color_to_label(packed, self._inverse_color_map)
+            if self._auto_color_decode and self.auto_color_to_label_extend:
+                return self._extend_auto_color_decoder(packed, labels)
 
-            packed = (
-                (r.astype(np.uint32) << 16)
-                | (g.astype(np.uint32) << 8)
-                | b.astype(np.uint32)
-            )
-            return self._packed_color_to_label(packed, self._inverse_color_map)
+            if (
+                not self._auto_color_decode
+                and not self._warned_unknown_colors
+                and np.any(labels == -1)
+            ):
+                unknown = int(np.unique(packed[labels == -1]).size)
+                self._logwarn(
+                    "_parse_semantic",
+                    "RGB semantic image contains %d unknown colors not present in ~color_map; those pixels become label=-1.",
+                    unknown,
+                )
+                self._warned_unknown_colors = True
+            return labels
 
         if data.ndim != 2:
             raise ValueError("semantic_topic must be single-channel label image")
         return data
+
+    @staticmethod
+    def _rgb_to_packed(data, encoding):
+        if encoding == "bgr8":
+            b, g, r = data[:, :, 0], data[:, :, 1], data[:, :, 2]
+        elif encoding == "rgb8":
+            r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
+        elif encoding == "bgra8":
+            b, g, r = data[:, :, 0], data[:, :, 1], data[:, :, 2]
+        elif encoding == "rgba8":
+            r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
+        else:
+            raise ValueError(f"Unsupported 3-channel encoding: {encoding}")
+        return (
+            (r.astype(np.uint32) << 16)
+            | (g.astype(np.uint32) << 8)
+            | b.astype(np.uint32)
+        )
 
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None):
         with self._maybe_profile("depth_callback"):

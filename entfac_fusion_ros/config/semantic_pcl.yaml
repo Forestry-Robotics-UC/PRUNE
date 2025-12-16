@@ -6,6 +6,8 @@ lidar_topic: "/lidar/points"                 # LiDAR mode; leave empty to prefer
 target_frame: "base_link"
 include_unlabeled_pts: false
 debug: false                 # if true, node prints full startup parameter report
+auto_color_to_label: true    # if semantic image is RGB/BGR and color_map is empty, infer palette -> label IDs
+auto_color_to_label_extend: true  # if true (auto mode), extend mapping if new colors appear later
 colorize_labels: false        # add PointCloud2 rgb field
 color_map: {}                 # optional: {label_id: [r,g,b], ...} for coloring + color->label decode
 downsample_factor: 1           # integer >=1; higher saves CPU

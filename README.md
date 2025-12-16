@@ -52,6 +52,8 @@ pcl = fuse_depth_semantics(
   - Mode auto-detected from the provided topics (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
+  - `~auto_color_to_label`: if the semantic image is RGB/BGR and `~color_map` is empty, infer a deterministic palette→label mapping (sorted by packed RGB).
+  - `~auto_color_to_label_extend`: extend the inferred mapping when new colors appear in later frames.
   - `~colorize_labels`: add an `rgb` field based on label IDs (default false).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~enable_profiling`: cProfile summary per callback (off by default).
@@ -135,7 +137,23 @@ pytest -q
 - Param precedence: YAML loaded via `rosparam` sets defaults; later `<param>` tags override. Avoid setting empty-string params in launch files since they overwrite YAML.
 
 ## Semantic colors
-- If the semantic topic is a 3-channel color image, set `semantic_pcl_node/color_map` so the node can convert colors back to label IDs.
+- If the semantic topic is a single-channel label image (`mono8`, `16UC1`, `32SC1`), no palette is needed.
+- If the semantic topic is a 3/4-channel palette image (`rgb8`, `bgr8`, `rgba8`, `bgra8`), the node must convert colors → label IDs to populate the `label` field and run fusion.
+  Options:
+  - Recommended: set `semantic_pcl_node/color_map` for stable, correct class IDs.
+  - Debug-friendly: set `semantic_pcl_node/auto_color_to_label:=true` to infer a deterministic mapping from observed colors (label IDs will be assigned by sorted packed RGB).
+
+Example `color_map` (original semfire palette):
+```yaml
+color_map:
+  0: [0, 0, 0]        # Background
+  1: [0, 0, 128]      # Fuel
+  2: [0, 50, 100]     # Trunks
+  3: [0, 213, 255]    # Humans
+  4: [163, 0, 128]    # Animals
+  5: [0, 51, 0]       # Canopies
+  6: [165, 165, 165]  # Traversable
+```
 
 ## Notes on design and performance
 - Separation of core vs. ROS keeps the math testable without ROS, and supports

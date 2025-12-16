@@ -7,6 +7,8 @@ lidar_topic: "/livox/lidar"
 target_frame: "base_link"
 include_unlabeled_pts: false
 debug: false
+auto_color_to_label: true
+auto_color_to_label_extend: true
 colorize_labels: true
 color_map: {}
 downsample_factor: 1
