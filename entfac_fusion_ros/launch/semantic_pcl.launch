@@ -6,8 +6,8 @@
   <arg name="semantic_topic" default="/semantic/labels"/>
   <arg name="confidence_in_topic" default=""/>
   <arg name="confidence_topic" default=""/>
-  <arg name="depth_in_topic" default=""/>
-  <arg name="depth_topic" default="/camera/depth/image_rect_raw"/>
+  <arg name="depth_input_in_topic" default=""/>
+  <arg name="depth_input_topic" default="/camera/depth/image_rect_raw"/>
 
   <rosparam command="load"
             file="$(find entfac_fusion_ros)/config/semantic_pcl.yaml"
@@ -18,8 +18,8 @@
     <node pkg="image_transport" type="republish" name="semantic_republish"
           args="compressed in:=$(arg semantic_in_topic) raw out:=$(arg semantic_topic)"/>
     <node pkg="image_transport" type="republish" name="depth_republish"
-          if="$(eval arg('depth_in_topic') != '')"
-          args="compressedDepth in:=$(arg depth_in_topic) raw out:=$(arg depth_topic)"/>
+          if="$(eval arg('depth_input_in_topic') != '')"
+          args="compressedDepth in:=$(arg depth_input_in_topic) raw out:=$(arg depth_input_topic)"/>
     <node pkg="image_transport" type="republish" name="confidence_republish"
           if="$(eval arg('confidence_in_topic') != '')"
           args="compressed in:=$(arg confidence_in_topic) raw out:=$(arg confidence_topic)"/>

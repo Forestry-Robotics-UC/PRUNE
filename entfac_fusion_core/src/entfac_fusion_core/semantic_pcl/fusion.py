@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
+# Derived from Semantic SLAM
+#
+# Original Author:
+#   Xuan Zhang
+#
+# Subsequent Contributions:
+#   David Russell
+#
+# Modified by:
+#   Duda Andrada (ENTFAC Sensor Fusion)
+#
+# Original project:
+#   https://github.com/floatlazer/semantic_slam
+#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
-# License: MIT License (open source, free to modify and redistribute)
+# License: GNU General Public License v3.0 (GPL-3.0)
 # Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
@@ -84,7 +98,6 @@ def fuse_depth_semantics(
     points_target = transform_points(target_T_depth, points_cam)
     pcl = SemanticPointCloud(points_target, labels.astype(np.int64), conf)
     pcl.validate()
-    LOGGER.info("Depth fusion produced %d points", points_target.shape[0])
     return pcl
 
 
@@ -121,8 +134,11 @@ def fuse_lidar_semantics(
         )
 
     uv_valid = uv[inside]
-    u = np.round(uv_valid[:, 0]).astype(int)
-    v = np.round(uv_valid[:, 1]).astype(int)
+    # Use truncation (floor for positive coords) to keep indices in-bounds.
+    # Rounding can produce u==w or v==h for points close to the image border
+    # (e.g., v=479.6 with h=480 -> round(v)=480), causing IndexError.
+    u = uv_valid[:, 0].astype(int)
+    v = uv_valid[:, 1].astype(int)
     labels = semantic.labels[v, u]
 
     if semantic.confidence is not None:

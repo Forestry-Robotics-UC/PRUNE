@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
+# Derived from Semantic SLAM
+#
+# Original Author:
+#   Xuan Zhang
+#
+# Subsequent Contributions:
+#   David Russell
+#
+# Modified by:
+#   Duda Andrada (ENTFAC Sensor Fusion)
+#
+# Original project:
+#   https://github.com/floatlazer/semantic_slam
+#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
-# License: MIT License (open source, free to modify and redistribute)
+# License: GNU General Public License v3.0 (GPL-3.0)
 # Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
@@ -15,7 +29,6 @@ import cProfile
 import io
 import logging
 import pstats
-import struct
 import sys
 import threading
 from contextlib import contextmanager
@@ -26,9 +39,7 @@ import rospy
 import tf2_ros
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from scipy.spatial.transform import Rotation as SciRotation
-from sensor_msgs import point_cloud2
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
-from std_msgs.msg import Header
 
 # Ensure core package is importable when running from a monorepo source tree.
 # In a proper catkin workspace, this is handled by PYTHONPATH via devel/setup.bash.
@@ -112,68 +123,125 @@ def transform_stamped_to_matrix(transform_stamped):
     return require_homogeneous_transform(mat.astype(float))
 
 
+def _build_label_rgb_float_lut(color_map=None):
+    """Build a uint16-label -> packed RGB float32 lookup table.
+
+    The packed RGB float encoding is the common ROS/PCL convention where a 24-bit
+    RGB integer is reinterpreted as float32.
+    """
+    labels = np.arange(65536, dtype=np.uint32)
+    r = (labels * 37) & 0xFF
+    g = (labels * 17) & 0xFF
+    b = (labels * 73) & 0xFF
+    packed = (r << 16) | (g << 8) | b
+    packed[65535] = 0xFFFFFF
+    if color_map:
+        for label_id, rgb in color_map.items():
+            if not (0 <= int(label_id) <= 65535):
+                continue
+            if not isinstance(rgb, (list, tuple)) or len(rgb) != 3:
+                continue
+            rr, gg, bb = int(rgb[0]), int(rgb[1]), int(rgb[2])
+            packed[int(label_id)] = ((rr & 0xFF) << 16) | ((gg & 0xFF) << 8) | (
+                bb & 0xFF
+            )
+    packed_le = packed.astype("<u4", copy=False)
+    return packed_le.view("<f4")
+
+
+def _labels_to_uint16(labels):
+    labels_arr = np.asarray(labels)
+    if labels_arr.ndim != 1:
+        labels_arr = labels_arr.reshape(-1)
+    if labels_arr.dtype.kind not in ("i", "u"):
+        raise ValueError("labels must be an integer array")
+    if np.any(labels_arr > 65535):
+        raise ValueError("label must fit into uint16 (0..65535)")
+    if labels_arr.dtype.kind == "u":
+        return labels_arr.astype(np.uint16, copy=False)
+    labels_u16 = labels_arr.astype(np.uint16, copy=True)
+    neg_mask = labels_arr < 0
+    if np.any(neg_mask):
+        labels_u16[neg_mask] = 65535
+    return labels_u16
+
+
 def semantic_pointcloud_to_msg(
-    pcl, frame_id, stamp, colorize_labels=False, color_map=None
+    pcl, frame_id, stamp, colorize_labels=False, rgb_lut=None
 ):
     """Convert SemanticPointCloud dataclass to PointCloud2."""
     has_conf = pcl.confidence is not None
+    has_rgb = bool(colorize_labels)
+    num_points = int(pcl.points_xyz.shape[0])
+
     fields = [
         PointField("x", 0, PointField.FLOAT32, 1),
         PointField("y", 4, PointField.FLOAT32, 1),
         PointField("z", 8, PointField.FLOAT32, 1),
+        PointField("label", 12, PointField.UINT16, 1),
     ]
-    offset = 12
-    fields.append(PointField("label", offset, PointField.UINT16, 1))
-    offset += 4
+    point_step = 16
     if has_conf:
-        fields.append(PointField("confidence", offset, PointField.FLOAT32, 1))
-        offset += 4
-    if colorize_labels:
-        fields.append(PointField("rgb", offset, PointField.FLOAT32, 1))
+        fields.append(PointField("confidence", point_step, PointField.FLOAT32, 1))
+        point_step += 4
+    if has_rgb:
+        fields.append(PointField("rgb", point_step, PointField.FLOAT32, 1))
+        point_step += 4
 
-    header = Header()
-    header.frame_id = frame_id
-    header.stamp = stamp
-
-    points = []
+    dtype_fields = [
+        ("x", "<f4"),
+        ("y", "<f4"),
+        ("z", "<f4"),
+        ("label", "<u2"),
+        ("_pad", "<u2"),
+    ]
     if has_conf:
-        for (x, y, z), lbl, conf in zip(pcl.points_xyz, pcl.labels, pcl.confidence):
-            label_val = int(lbl)
-            if label_val < 0:
-                label_val = 65535
-            if label_val > 65535:
-                raise ValueError("label must fit into uint16 (0..65535)")
-            record = [float(x), float(y), float(z), label_val, float(conf)]
-            if colorize_labels:
-                record.append(_label_to_rgb_float(label_val, color_map))
-            points.append(tuple(record))
-    else:
-        for (x, y, z), lbl in zip(pcl.points_xyz, pcl.labels):
-            label_val = int(lbl)
-            if label_val < 0:
-                label_val = 65535
-            if label_val > 65535:
-                raise ValueError("label must fit into uint16 (0..65535)")
-            record = [float(x), float(y), float(z), label_val]
-            if colorize_labels:
-                record.append(_label_to_rgb_float(label_val, color_map))
-            points.append(tuple(record))
+        dtype_fields.append(("confidence", "<f4"))
+    if has_rgb:
+        dtype_fields.append(("rgb", "<f4"))
+    dtype = np.dtype(dtype_fields)
+    if dtype.itemsize != point_step:
+        raise RuntimeError(
+            f"internal dtype mismatch: itemsize={dtype.itemsize} point_step={point_step}"
+        )
 
-    return point_cloud2.create_cloud(header, fields, points)
+    cloud = np.empty(num_points, dtype=dtype)
+    points = np.asarray(pcl.points_xyz)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("points_xyz must be (N, 3)")
+    cloud["x"] = points[:, 0]
+    cloud["y"] = points[:, 1]
+    cloud["z"] = points[:, 2]
+    cloud["_pad"] = 0
 
+    labels_u16 = _labels_to_uint16(pcl.labels)
+    if labels_u16.shape[0] != num_points:
+        raise ValueError("labels must be (N,) and aligned with points_xyz")
+    cloud["label"] = labels_u16
 
-def _label_to_rgb_float(label_val, color_map=None):
-    # Custom color map if provided (expects dict of int -> [r,g,b])
-    if label_val == 65535:
-        r, g, b = 255, 255, 255
-    elif color_map and label_val in color_map:
-        r, g, b = color_map[label_val]
-    else:
-        r = (label_val * 37) % 256
-        g = (label_val * 17) % 256
-        b = (label_val * 73) % 256
-    packed = (int(r) << 16) | (int(g) << 8) | int(b)
-    return struct.unpack("f", struct.pack("I", packed))[0]
+    if has_conf:
+        conf = np.asarray(pcl.confidence, dtype=np.float32)
+        if conf.shape[0] != num_points:
+            raise ValueError("confidence must be (N,) and aligned with points_xyz")
+        cloud["confidence"] = conf
+
+    if has_rgb:
+        if rgb_lut is None:
+            rgb_lut = _build_label_rgb_float_lut()
+        cloud["rgb"] = rgb_lut[labels_u16]
+
+    msg = PointCloud2()
+    msg.header.frame_id = frame_id
+    msg.header.stamp = stamp
+    msg.height = 1
+    msg.width = num_points
+    msg.fields = fields
+    msg.is_bigendian = False
+    msg.point_step = point_step
+    msg.row_step = point_step * num_points
+    msg.is_dense = True
+    msg.data = cloud.tobytes()
+    return msg
 
 
 def _coerce_bool(val):
@@ -251,16 +319,33 @@ class SemanticPclNode:
         if not self.camera_info_topic:
             raise ValueError("~camera_info is required")
 
+        self.depth_input_topic = self._get_param_str(
+            "~depth_input_topic",
+            None,
+            "Geometry input topic (sensor_msgs/Image depth or sensor_msgs/PointCloud2 LiDAR). If set, overrides ~depth_topic/~lidar_topic.",
+        )
         self.depth_topic = self._get_param_str(
             "~depth_topic",
             None,
-            "Depth image topic for depth mode (sensor_msgs/Image). Leave empty to disable.",
+            "DEPRECATED: use ~depth_input_topic. Depth image topic for depth mode (sensor_msgs/Image). Leave empty to disable.",
         )
         self.lidar_topic = self._get_param_str(
             "~lidar_topic",
             None,
-            "PointCloud2 topic for LiDAR mode (sensor_msgs/PointCloud2). Leave empty to disable.",
+            "DEPRECATED: use ~depth_input_topic. PointCloud2 topic for LiDAR mode (sensor_msgs/PointCloud2). Leave empty to disable.",
         )
+        if self.depth_input_topic and self.mode in ("depth", "lidar"):
+            if self.depth_topic or self.lidar_topic:
+                self._logwarn(
+                    "__init__",
+                    "~depth_input_topic is set; ignoring deprecated ~depth_topic/~lidar_topic",
+                )
+            if self.mode == "depth":
+                self.depth_topic = self.depth_input_topic
+                self.lidar_topic = None
+            else:
+                self.lidar_topic = self.depth_input_topic
+                self.depth_topic = None
 
         self.include_unlabeled = self._get_param_bool(
             "~include_unlabeled_pts",
@@ -276,11 +361,21 @@ class SemanticPclNode:
             "~color_map",
             "Optional dict {label_id: [r,g,b]} used for coloring and for color->label decode when semantic images are RGB.",
         )
+        self._color_map_revision = 1 if self.color_map else 0
+        self._rgb_lut_revision = -1
+        self._rgb_float_lut = None
         self.auto_color_to_label = self._get_param_bool(
             "~auto_color_to_label",
             False,
             "If true and semantic images are RGB/BGR, build a deterministic color->label mapping from observed colors.",
         )
+        self.semantic_color_quantization_step = self._get_param_int(
+            "~semantic_color_quantization_step",
+            1,
+            "Quantize RGB/BGR semantic images to nearest multiple of this step before color->label decoding (helps with JPEG artifacts).",
+        )
+        if self.semantic_color_quantization_step < 1:
+            raise ValueError("~semantic_color_quantization_step must be >= 1")
         self.auto_color_to_label_extend = self._get_param_bool(
             "~auto_color_to_label_extend",
             True,
@@ -466,6 +561,22 @@ class SemanticPclNode:
         self._record_param(name, color_map, source, description)
         return color_map
 
+    def _get_rgb_float_lut(self):
+        if not self.colorize_labels:
+            return None
+        if (
+            self._rgb_float_lut is None
+            or self._rgb_lut_revision != self._color_map_revision
+        ):
+            self._rgb_float_lut = _build_label_rgb_float_lut(self.color_map)
+            self._rgb_lut_revision = self._color_map_revision
+            self._logdebug(
+                "_get_rgb_float_lut",
+                "Built label->rgb LUT (color_map_entries=%d)",
+                len(self.color_map) if self.color_map else 0,
+            )
+        return self._rgb_float_lut
+
     def _log_param_report(self):
         self._loginfo("_log_param_report", "semantic_pcl_node debug report:")
         self._loginfo(
@@ -644,8 +755,89 @@ class SemanticPclNode:
                 )
             return None
 
+    def _wait_for_topic_type(self, topic, timeout=2.0, warn_on_timeout=True):
+        """Wait for a message and return its ROS type string (e.g., sensor_msgs/Image)."""
+        if not topic:
+            return None
+        timeout_str = "None" if timeout is None else f"{float(timeout):.2f}s"
+        self._logdebug(
+            "_wait_for_topic_type",
+            "Waiting for AnyMsg on topic=%s (timeout=%s)",
+            topic,
+            timeout_str,
+        )
+        try:
+            msg = rospy.wait_for_message(topic, rospy.AnyMsg, timeout=timeout)
+            type_str = None
+            if hasattr(msg, "_connection_header") and msg._connection_header:
+                type_str = msg._connection_header.get("type")
+            self._logdebug(
+                "_wait_for_topic_type",
+                "Received AnyMsg on topic=%s type=%s",
+                topic,
+                type_str,
+            )
+            return type_str
+        except Exception as exc:  # noqa: BLE001
+            if warn_on_timeout:
+                self._logwarn(
+                    "_wait_for_topic_type",
+                    "Timeout waiting for topic type on %s: %s",
+                    topic,
+                    exc,
+                )
+            else:
+                self._logdebug(
+                    "_wait_for_topic_type",
+                    "Timeout waiting for topic type on %s: %s",
+                    topic,
+                    exc,
+                )
+            return None
+
     def _detect_mode(self):
         """Detect mode based on configured topics' message types."""
+        if self.depth_input_topic:
+            if self.depth_topic or self.lidar_topic:
+                self._logwarn(
+                    "_detect_mode",
+                    "~depth_input_topic is set; ignoring deprecated ~depth_topic/~lidar_topic",
+                )
+            type_str = None
+            while type_str is None and not rospy.is_shutdown():
+                type_str = self._wait_for_topic_type(
+                    self.depth_input_topic, timeout=1.0, warn_on_timeout=False
+                )
+            if type_str == "sensor_msgs/Image":
+                self.depth_topic = self.depth_input_topic
+                self.lidar_topic = None
+                self._loginfo(
+                    "_detect_mode",
+                    "Auto-detected depth_input_topic type=%s -> mode=depth",
+                    type_str,
+                )
+                return "depth"
+            if type_str == "sensor_msgs/PointCloud2":
+                self.lidar_topic = self.depth_input_topic
+                self.depth_topic = None
+                self._loginfo(
+                    "_detect_mode",
+                    "Auto-detected depth_input_topic type=%s -> mode=lidar",
+                    type_str,
+                )
+                return "lidar"
+            if type_str == "sensor_msgs/CompressedImage":
+                raise ValueError(
+                    "~depth_input_topic is sensor_msgs/CompressedImage; republish to raw Image via image_transport or set use_republish:=true in launch"
+                )
+            if type_str:
+                raise ValueError(
+                    f"Unsupported ~depth_input_topic message type: {type_str} (expected sensor_msgs/Image or sensor_msgs/PointCloud2)"
+                )
+            raise ValueError(
+                f"Unable to determine message type for ~depth_input_topic={self.depth_input_topic}"
+            )
+
         depth_set = bool(self.depth_topic)
         lidar_set = bool(self.lidar_topic)
         self._logdebug(
@@ -684,12 +876,26 @@ class SemanticPclNode:
         return "depth"
 
     @staticmethod
-    def _build_inverse_color_map(color_map):
+    def _build_inverse_color_map(color_map, quantize_step=1):
         keys = []
         values = []
+        packed_seen = {}
+        step = int(quantize_step)
+        half = step // 2
         for label, rgb in color_map.items():
             r, g, b = rgb
-            keys.append((int(r) << 16) | (int(g) << 8) | int(b))
+            if step > 1:
+                r = int(np.clip(((int(r) + half) // step) * step, 0, 255))
+                g = int(np.clip(((int(g) + half) // step) * step, 0, 255))
+                b = int(np.clip(((int(b) + half) // step) * step, 0, 255))
+            packed = (int(r) << 16) | (int(g) << 8) | int(b)
+            if packed in packed_seen and packed_seen[packed] != int(label):
+                raise ValueError(
+                    "color_map entries collide after quantization: "
+                    f"packed=0x{packed:06x} labels={packed_seen[packed]} and {int(label)}"
+                )
+            packed_seen[packed] = int(label)
+            keys.append(packed)
             values.append(int(label))
 
         keys = np.asarray(keys, dtype=np.uint32)
@@ -711,7 +917,9 @@ class SemanticPclNode:
         return labels_flat.reshape(packed.shape)
 
     def _set_color_decoder_from_color_map(self):
-        self._inverse_color_map = self._build_inverse_color_map(self.color_map)
+        self._inverse_color_map = self._build_inverse_color_map(
+            self.color_map, quantize_step=self.semantic_color_quantization_step
+        )
         keys_sorted, labels_sorted = self._inverse_color_map
         self._packed_to_label = {
             int(k): int(v) for k, v in zip(keys_sorted.tolist(), labels_sorted.tolist())
@@ -736,6 +944,7 @@ class SemanticPclNode:
             g = (packed_val >> 8) & 0xFF
             b = packed_val & 0xFF
             self.color_map[int(label_id)] = [int(r), int(g), int(b)]
+        self._color_map_revision += 1
 
         self._loginfo(
             "_set_auto_color_decoder_from_packed",
@@ -770,6 +979,7 @@ class SemanticPclNode:
             b = int(packed_val) & 0xFF
             self.color_map[int(next_id)] = [int(r), int(g), int(b)]
             next_id += 1
+        self._color_map_revision += 1
 
         keys_sorted = np.asarray(sorted(self._packed_to_label.keys()), dtype=np.uint32)
         labels_sorted = np.asarray(
@@ -971,16 +1181,24 @@ class SemanticPclNode:
                 if self.color_map is not None:
                     self._set_color_decoder_from_color_map()
                 elif self.auto_color_to_label:
-                    kind, count = count_semantic_groups(data[:, :, :3])
+                    kind, count = count_semantic_groups(
+                        data[:, :, :3],
+                        color_quantize_step=self.semantic_color_quantization_step,
+                    )
                     self._logwarn(
                         "_parse_semantic",
-                        "RGB semantic image detected (%s=%d). No ~color_map provided; using auto_color_to_label mapping. "
+                        "RGB semantic image detected (%s=%d, quantize_step=%d). No ~color_map provided; using auto_color_to_label mapping. "
                         "Provide ~color_map for stable class IDs.",
                         kind,
                         int(count),
+                        int(self.semantic_color_quantization_step),
                     )
                     self._set_auto_color_decoder_from_packed(
-                        self._rgb_to_packed(data, encoding)
+                        self._rgb_to_packed(
+                            data,
+                            encoding,
+                            quantize_step=self.semantic_color_quantization_step,
+                        )
                     )
                 else:
                     raise ValueError(
@@ -988,7 +1206,9 @@ class SemanticPclNode:
                         "or ~auto_color_to_label:=true to infer a mapping from the palette"
                     )
 
-            packed = self._rgb_to_packed(data, encoding)
+            packed = self._rgb_to_packed(
+                data, encoding, quantize_step=self.semantic_color_quantization_step
+            )
             labels = self._packed_color_to_label(packed, self._inverse_color_map)
             if self._auto_color_decode and self.auto_color_to_label_extend:
                 return self._extend_auto_color_decoder(packed, labels)
@@ -1012,7 +1232,17 @@ class SemanticPclNode:
         return data
 
     @staticmethod
-    def _rgb_to_packed(data, encoding):
+    def _quantize_u8(arr_u8, step):
+        step = int(step)
+        if step <= 1:
+            return arr_u8.astype(np.uint32, copy=False)
+        vals = arr_u8.astype(np.int16, copy=False)
+        half = step // 2
+        quant = ((vals + half) // step) * step
+        return np.clip(quant, 0, 255).astype(np.uint32, copy=False)
+
+    @classmethod
+    def _rgb_to_packed(cls, data, encoding, quantize_step=1):
         if encoding == "bgr8":
             b, g, r = data[:, :, 0], data[:, :, 1], data[:, :, 2]
         elif encoding == "rgb8":
@@ -1023,10 +1253,12 @@ class SemanticPclNode:
             r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
         else:
             raise ValueError(f"Unsupported 3-channel encoding: {encoding}")
+        step = int(quantize_step)
+        r_u32 = cls._quantize_u8(r, step)
+        g_u32 = cls._quantize_u8(g, step)
+        b_u32 = cls._quantize_u8(b, step)
         return (
-            (r.astype(np.uint32) << 16)
-            | (g.astype(np.uint32) << 8)
-            | b.astype(np.uint32)
+            (r_u32 << 16) | (g_u32 << 8) | b_u32
         )
 
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None):
@@ -1086,19 +1318,19 @@ class SemanticPclNode:
                 target_T_depth,
                 include_unlabeled=self.include_unlabeled,
             )
-            self._loginfo(
-                "_depth_callback",
-                "Publishing depth-based semantic PCL with %d points",
-                pcl.points_xyz.shape[0],
-            )
-            pcl_msg = semantic_pointcloud_to_msg(
-                pcl,
-                self.target_frame,
-                stamp,
-                colorize_labels=self.colorize_labels,
-                color_map=self.color_map,
-            )
-            self.pcl_pub.publish(pcl_msg)
+            self._logdebug(
+            "_depth_callback",
+            "Publishing depth-based semantic PCL with %d points",
+            pcl.points_xyz.shape[0],
+        )
+        pcl_msg = semantic_pointcloud_to_msg(
+            pcl,
+            self.target_frame,
+            stamp,
+            colorize_labels=self.colorize_labels,
+            rgb_lut=self._get_rgb_float_lut(),
+        )
+        self.pcl_pub.publish(pcl_msg)
 
     def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None):
         with self._maybe_profile("lidar_callback"):
@@ -1182,7 +1414,7 @@ class SemanticPclNode:
                 self.target_frame,
                 stamp,
                 colorize_labels=self.colorize_labels,
-                color_map=self.color_map,
+                rgb_lut=self._get_rgb_float_lut(),
             )
             self.pcl_pub.publish(pcl_msg)
 

@@ -5,7 +5,7 @@
   <description>ROS wrappers for ENTFAC Sensor Fusion semantic point cloud generation.</description>
 
   <maintainer email="duda.andrada@isr.uc.pt">Duda Andrada</maintainer>
-  <license>MIT</license>
+  <license>GPL-3.0</license>
 
   <buildtool_depend>catkin</buildtool_depend>
 

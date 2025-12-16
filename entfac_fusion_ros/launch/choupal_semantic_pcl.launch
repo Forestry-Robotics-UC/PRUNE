@@ -30,6 +30,11 @@
   <node pkg="image_transport" type="republish" name="semantic_republish"
         output="screen"
         args="compressed in:=/segmentation/test raw out:=/segmentation/test" />
+    <node pkg="image_transport" 
+          type="republish" 
+          name="realsense_depth" 
+          args="compressedDepth in:=/realsense/aligned_depth_to_color/image_raw
+                raw out:=/realsense/aligned_depth_to_color/image_raw"/>
 
   <!-- Load node parameters (topics, target_frame, downsample, color_map, etc.). -->
   <rosparam file="$(find entfac_fusion_ros)/config/choupal_semantic_pcl.yaml"

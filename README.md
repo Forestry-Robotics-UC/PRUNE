@@ -4,6 +4,23 @@ Stateless sensor fusion module for ENTFAC that turns single-frame semantic
 perception outputs plus geometry into semantic point cloud measurements. Mapping
 and temporal fusion live elsewhere.
 
+## Attribution and Licensing
+
+ENTFAC Sensor Fusion is a derivative work based on the open-source **Semantic SLAM**
+implementation originally developed by **Xuan Zhang**, and later extended by
+**David Russell**, particularly in the lidar-to-camera projection and semantic
+point cloud generation components.
+
+Original project:
+https://github.com/floatlazer/semantic_slam
+
+Significant modifications, refactoring, and architectural changes have been made
+to support the ENTFAC modular sensor fusion framework, including ROS1 integration,
+semantic fusion strategies, and system-level reorganization.
+
+This project is distributed under the **GNU General Public License v3.0 (GPL-3.0)**.
+See `LICENSE`.
+
 ## Responsibilities
 - Input: semantic labels (+ optional confidence), depth image or LiDAR points,
   camera intrinsics, and frame transforms.
@@ -47,13 +64,14 @@ pcl = fuse_depth_semantics(
   - `~semantic_topic`: single-channel semantic labels (Image).
   - `~confidence_topic` (optional): confidence image aligned to semantic labels.
   - `~camera_info`: CameraInfo for intrinsics + frame id.
-  - `~depth_topic`: (Image) used for depth fusion if provided.
-  - `~lidar_topic`: (PointCloud2) used for LiDAR fusion if provided.
-  - Mode auto-detected from the provided topics (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
+  - `~depth_input_topic`: geometry input topic; set to either a depth `sensor_msgs/Image` or a `sensor_msgs/PointCloud2` (LiDAR). The node auto-detects which and selects the fusion mode.
+  - Deprecated: `~depth_topic` and `~lidar_topic` (still supported for backwards-compat).
+  - Mode auto-detected from `~depth_input_topic` (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
   - `~auto_color_to_label`: if the semantic image is RGB/BGR and `~color_map` is empty, infer a deterministic palette→label mapping (sorted by packed RGB).
   - `~auto_color_to_label_extend`: extend the inferred mapping when new colors appear in later frames.
+  - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before color→label decode (set to 8/16 for JPEG artifacts; 1 disables).
   - `~colorize_labels`: add an `rgb` field based on label IDs (default false).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~enable_profiling`: cProfile summary per callback (off by default).
@@ -162,8 +180,10 @@ color_map:
 - LiDAR projection assumes standard XYZ in sensor frame, compatible with common
   vendors (Ouster, Livox, Velodyne) once their drivers publish `PointCloud2`.
   Extrinsics can come from TF/URDF or static params for bag replay.
-- Potential bottlenecks: full-image meshgrid creation (now cached) and image
-  copies; for higher resolutions consider `downsample_factor` or upstream
+- Potential bottlenecks: full-image meshgrid creation (now cached), image
+  copies, and PointCloud2 packing; the node avoids per-point Python loops by
+  packing output clouds with NumPy (structured array → `.tobytes()`), but higher
+  resolutions may still benefit from `downsample_factor` or upstream
   downsampling.
 - LiDAR compatibility: projection expects XYZ in sensor frame; standard Ouster,
   Livox, and Velodyne ROS drivers publish `PointCloud2` in this form, so only
