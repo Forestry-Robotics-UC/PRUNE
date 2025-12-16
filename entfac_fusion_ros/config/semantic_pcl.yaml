@@ -5,6 +5,7 @@ depth_topic: "/camera/depth/image_rect_raw"  # depth mode; leave empty to prefer
 lidar_topic: "/lidar/points"                 # LiDAR mode; leave empty to prefer depth
 target_frame: "base_link"
 include_unlabeled_pts: false
+debug: false                 # if true, node prints full startup parameter report
 colorize_labels: false        # add PointCloud2 rgb field
 color_map: {}                 # optional: {label_id: [r,g,b], ...} for coloring + color->label decode
 downsample_factor: 1           # integer >=1; higher saves CPU

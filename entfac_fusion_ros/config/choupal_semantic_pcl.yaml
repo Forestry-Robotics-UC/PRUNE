@@ -6,6 +6,7 @@ depth_topic: ""                # unused (LiDAR mode)
 lidar_topic: "/livox/lidar"
 target_frame: "base_link"
 include_unlabeled_pts: false
+debug: false
 colorize_labels: true
 color_map: {}
 downsample_factor: 1

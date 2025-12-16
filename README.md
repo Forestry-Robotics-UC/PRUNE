@@ -123,6 +123,10 @@ pytest -q
   ```bash
   roslaunch entfac_fusion_ros semantic_pcl.launch
   ```
+- Debug startup report + DEBUG logs:
+  ```bash
+  roslaunch entfac_fusion_ros semantic_pcl.launch debug:=true
+  ```
 - To decompress compressed topics, set `use_republish:=true` and provide base input topics (no `/compressed` suffix), e.g. `semantic_in_topic:=/segmentation/test`.
 - Choupal bag example (plays bags, republishes `/segmentation/test` from compressed, and loads TF from `/bags/sensor-box.urdf`):
   ```bash

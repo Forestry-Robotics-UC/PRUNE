@@ -55,7 +55,9 @@ def transform_stamped_to_matrix(transform_stamped):
     q = transform_stamped.transform.rotation
     translation = np.array([t.x, t.y, t.z], dtype=float)
     quat = np.array([q.x, q.y, q.z, q.w], dtype=float)
-    rot = SciRotation.from_quat(quat).as_matrix()
+    rot_obj = SciRotation.from_quat(quat)
+    # SciPy < 1.4 uses as_dcm(); newer versions use as_matrix().
+    rot = rot_obj.as_matrix() if hasattr(rot_obj, "as_matrix") else rot_obj.as_dcm()
     mat = np.eye(4, dtype=float)
     mat[:3, :3] = rot
     mat[:3, 3] = translation
@@ -126,29 +128,129 @@ def _label_to_rgb_float(label_val, color_map=None):
     return struct.unpack("f", struct.pack("I", packed))[0]
 
 
+def _coerce_bool(val):
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        return val.strip().lower() in ("1", "true", "yes", "on")
+    return bool(val)
+
+
+def _rosargv_bool(name, default=False):
+    prefix = f"_{name}:="
+    for arg in sys.argv:
+        if arg.startswith(prefix):
+            return _coerce_bool(arg[len(prefix) :])
+    return default
+
+
+def _rosargv_has_private_param(name):
+    if not isinstance(name, str):
+        return False
+    key = name
+    if key.startswith("~"):
+        key = key[1:]
+    if "/" in key:
+        key = key.rsplit("/", 1)[-1]
+    prefix = f"_{key}:="
+    return any(arg.startswith(prefix) for arg in sys.argv)
+
+
 class SemanticPclNode:
     """ROS node bridging topics to the numpy fusion core."""
 
     def __init__(self):
-        # 'depth' uses aligned depth image; 'lidar' projects LiDAR into image.
-        self.mode = rospy.get_param("~mode", "").lower()
-        self.target_frame = self._param_string("~target_frame", "base_link")
-        self.semantic_topic = self._param_string("~semantic_topic", "/semantic/labels")
-        self.conf_topic = self._param_string("~confidence_topic", None)
-        self.camera_info_topic = self._param_string("~camera_info", None)
-        self.depth_topic = self._param_string("~depth_topic", None)
-        self.lidar_topic = self._param_string("~lidar_topic", None)
-        self.include_unlabeled = rospy.get_param("~include_unlabeled_pts", False)
-        self.colorize_labels = rospy.get_param("~colorize_labels", False)
-        self.color_map = self._load_color_map("~color_map")
+        self._param_meta = {}
+
+        self.debug = self._get_param_bool(
+            "~debug",
+            False,
+            "Enable debug parameter report at startup (and DEBUG logs if set via launch arg).",
+        )
+
+        # 'depth' uses aligned depth image; 'lidar' projects LiDAR points into the image.
+        self.mode = self._get_param_str(
+            "~mode",
+            "",
+            "Force fusion mode ('depth' or 'lidar'); empty string enables auto-detect.",
+            allow_empty=True,
+        ).lower()
+
+        self.target_frame = self._get_param_str(
+            "~target_frame",
+            "base_link",
+            "Output frame for published semantic point cloud.",
+        )
+        self.semantic_topic = self._get_param_str(
+            "~semantic_topic",
+            "/semantic/labels",
+            "Semantic label image topic (sensor_msgs/Image).",
+        )
+        self.conf_topic = self._get_param_str(
+            "~confidence_topic",
+            None,
+            "Optional confidence image topic aligned with semantic labels (sensor_msgs/Image).",
+        )
+        self.camera_info_topic = self._get_param_str(
+            "~camera_info",
+            None,
+            "CameraInfo topic providing intrinsics and camera frame_id (sensor_msgs/CameraInfo).",
+        )
+        if not self.camera_info_topic:
+            raise ValueError("~camera_info is required")
+
+        self.depth_topic = self._get_param_str(
+            "~depth_topic",
+            None,
+            "Depth image topic for depth mode (sensor_msgs/Image). Leave empty to disable.",
+        )
+        self.lidar_topic = self._get_param_str(
+            "~lidar_topic",
+            None,
+            "PointCloud2 topic for LiDAR mode (sensor_msgs/PointCloud2). Leave empty to disable.",
+        )
+
+        self.include_unlabeled = self._get_param_bool(
+            "~include_unlabeled_pts",
+            False,
+            "If true, keep points outside the camera FOV (label=-1).",
+        )
+        self.colorize_labels = self._get_param_bool(
+            "~colorize_labels",
+            False,
+            "If true, publish an extra PointCloud2 field 'rgb' based on label IDs.",
+        )
+        self.color_map = self._get_color_map(
+            "~color_map",
+            "Optional dict {label_id: [r,g,b]} used for coloring and for color->label decode when semantic images are RGB.",
+        )
         self._inverse_color_map = None
-        self.downsample_factor = int(rospy.get_param("~downsample_factor", 1))
+        self.downsample_factor = self._get_param_int(
+            "~downsample_factor",
+            1,
+            "Integer >=1 stride used to subsample images for CPU/ARM targets.",
+        )
         if self.downsample_factor < 1:
             raise ValueError("~downsample_factor must be >= 1")
-        self.enable_profiling = rospy.get_param("~enable_profiling", False)
-        self.static_target_T_depth = self._load_matrix_param("~static_target_T_depth")
-        self.static_camera_T_lidar = self._load_matrix_param("~static_camera_T_lidar")
-        self.static_target_T_lidar = self._load_matrix_param("~static_target_T_lidar")
+        self.enable_profiling = self._get_param_bool(
+            "~enable_profiling",
+            False,
+            "If true, print a short cProfile summary per callback (future C++/numba profiling hook).",
+        )
+        self.static_target_T_depth = self._get_matrix_param(
+            "~static_target_T_depth",
+            "Optional static 4x4 row-major matrix: depth_frame -> target_frame. Overrides TF.",
+        )
+        self.static_camera_T_lidar = self._get_matrix_param(
+            "~static_camera_T_lidar",
+            "Optional static 4x4 row-major matrix: lidar_frame -> camera_frame. Overrides TF.",
+        )
+        self.static_target_T_lidar = self._get_matrix_param(
+            "~static_target_T_lidar",
+            "Optional static 4x4 row-major matrix: lidar_frame -> target_frame. Overrides TF.",
+        )
         if self.static_target_T_depth is not None:
             rospy.loginfo("Using static target_T_depth parameter")
         if self.static_camera_T_lidar is not None:
@@ -175,6 +277,126 @@ class SemanticPclNode:
 
         self._register_subscribers()
         rospy.loginfo("semantic_pcl_node initialized (mode=%s)", self.mode)
+        if self.debug:
+            self._log_param_report()
+
+    def _record_param(self, name, value, source, description):
+        self._param_meta[name] = {
+            "value": value,
+            "source": source,
+            "description": description,
+        }
+
+    def _get_param(self, name, default, description, *, allow_empty=False):
+        has = rospy.has_param(name)
+        raw = rospy.get_param(name, default)
+        if _rosargv_has_private_param(name):
+            source = "cli"
+        else:
+            source = "param_server" if has else "default"
+        if isinstance(raw, str) and not allow_empty and raw.strip() == "":
+            raw = default
+            if has:
+                source = "empty->default"
+        self._record_param(name, raw, source, description)
+        return raw
+
+    def _get_param_str(self, name, default, description, *, allow_empty=False):
+        raw = self._get_param(name, default, description, allow_empty=allow_empty)
+        if raw is None:
+            val = default
+        elif isinstance(raw, str):
+            val = raw
+        else:
+            val = str(raw)
+        self._param_meta[name]["value"] = val
+        return val
+
+    def _get_param_bool(self, name, default, description):
+        raw = self._get_param(name, default, description)
+        val = _coerce_bool(raw)
+        self._param_meta[name]["value"] = val
+        return val
+
+    def _get_param_int(self, name, default, description):
+        raw = self._get_param(name, default, description)
+        val = int(raw)
+        self._param_meta[name]["value"] = val
+        return val
+
+    def _get_matrix_param(self, name, description):
+        has = rospy.has_param(name)
+        raw = rospy.get_param(name, [])
+        source = "param_server" if has else "default"
+        mat = None
+        if isinstance(raw, list) and len(raw) == 16:
+            try:
+                mat = require_homogeneous_transform(
+                    np.asarray(raw, dtype=float).reshape(4, 4)
+                )
+            except ValueError as exc:
+                rospy.logwarn("%s rejected: %s", name, exc)
+        elif raw not in (None, [], {}):
+            rospy.logwarn("%s expected 16-element list (row-major 4x4), got: %r", name, raw)
+        self._record_param(name, mat, source, description)
+        return mat
+
+    def _get_color_map(self, name, description):
+        has = rospy.has_param(name)
+        raw = rospy.get_param(name, {})
+        source = "param_server" if has else "default"
+        color_map = None
+        if isinstance(raw, dict):
+            parsed = {}
+            for k, v in raw.items():
+                try:
+                    key_int = int(k)
+                    if isinstance(v, (list, tuple)) and len(v) == 3:
+                        parsed[key_int] = [int(v[0]), int(v[1]), int(v[2])]
+                except Exception:  # noqa: BLE001
+                    continue
+            color_map = parsed if parsed else None
+        self._record_param(name, color_map, source, description)
+        return color_map
+
+    def _log_param_report(self):
+        rospy.loginfo("semantic_pcl_node debug report:")
+        rospy.loginfo(
+            "  source=cli means passed as _param:=...; source=param_server means set via YAML/launch; source=default means unset."
+        )
+        for name in sorted(self._param_meta.keys()):
+            meta = self._param_meta[name]
+            val = meta["value"]
+            if isinstance(val, np.ndarray):
+                val_str = np.array2string(val, precision=4, suppress_small=True)
+            else:
+                val_str = repr(val)
+            rospy.loginfo(
+                "  %s=%s (%s) - %s",
+                name,
+                val_str,
+                meta["source"],
+                meta["description"],
+            )
+        rospy.loginfo("derived mode=%s", self.mode)
+        rospy.loginfo("derived camera_frame=%s", self.camera_frame)
+        rospy.loginfo(
+            "derived intrinsics=%s",
+            np.array2string(self.intrinsics, precision=4, suppress_small=True),
+        )
+        rospy.loginfo(
+            "active subscriptions: semantic=%s depth=%s lidar=%s confidence=%s",
+            self.semantic_topic,
+            self.depth_topic,
+            self.lidar_topic,
+            self.conf_topic,
+        )
+        rospy.loginfo(
+            "primed transforms: target_T_depth=%s camera_T_lidar=%s target_T_lidar=%s",
+            self.target_T_depth is not None,
+            self.camera_T_lidar is not None,
+            self.target_T_lidar is not None,
+        )
 
     def _register_subscribers(self):
         """Setup message_filters synchronizer."""
@@ -251,40 +473,6 @@ class SemanticPclNode:
         )
         return "depth"
 
-    def _load_matrix_param(self, name):
-        """Load a 4x4 matrix parameter if provided."""
-        raw = rospy.get_param(name, [])
-        if isinstance(raw, list) and len(raw) == 16:
-            mat = np.asarray(raw, dtype=float).reshape(4, 4)
-            try:
-                return require_homogeneous_transform(mat)
-            except ValueError as exc:
-                rospy.logwarn("%s rejected: %s", name, exc)
-        return None
-
-    @staticmethod
-    def _param_string(name, default=None):
-        """Fetch string param; if empty or None, return default."""
-        val = rospy.get_param(name, default)
-        if isinstance(val, str) and val.strip() == "":
-            return default
-        return val
-
-    @staticmethod
-    def _load_color_map(name):
-        raw = rospy.get_param(name, {})
-        if not isinstance(raw, dict):
-            return None
-        color_map = {}
-        for k, v in raw.items():
-            try:
-                key_int = int(k)
-                if isinstance(v, (list, tuple)) and len(v) == 3:
-                    color_map[key_int] = [int(v[0]), int(v[1]), int(v[2])]
-            except Exception:
-                continue
-        return color_map if color_map else None
-
     @staticmethod
     def _build_inverse_color_map(color_map):
         keys = []
@@ -311,30 +499,6 @@ class SemanticPclNode:
         valid[in_range] = keys_sorted[idx[in_range]] == packed_flat[in_range]
         labels_flat[valid] = labels_sorted[idx[valid]]
         return labels_flat.reshape(packed.shape)
-
-
-def _quat_to_matrix(quat):
-    """Convert quaternion (x, y, z, w) to 4x4 matrix without tf dependency."""
-    x, y, z, w = quat
-    n = x * x + y * y + z * z + w * w
-    if n < np.finfo(float).eps:
-        return np.eye(4, dtype=float)
-    s = 2.0 / n
-    xx, yy, zz = x * x * s, y * y * s, z * z * s
-    xy, xz, yz = x * y * s, x * z * s, y * z * s
-    wx, wy, wz = w * x * s, w * y * s, w * z * s
-
-    mat = np.eye(4, dtype=float)
-    mat[0, 0] = 1.0 - (yy + zz)
-    mat[0, 1] = xy - wz
-    mat[0, 2] = xz + wy
-    mat[1, 0] = xy + wz
-    mat[1, 1] = 1.0 - (xx + zz)
-    mat[1, 2] = yz - wx
-    mat[2, 0] = xz - wy
-    mat[2, 1] = yz + wx
-    mat[2, 2] = 1.0 - (xx + yy)
-    return mat
 
     @staticmethod
     def _scale_intrinsics(intrinsics, factor):
@@ -504,6 +668,7 @@ def _quat_to_matrix(quat):
             )
             target_T_depth = self.target_T_depth
             if target_T_depth is None:
+                rospy.logdebug("Skipping frame: missing depth->target transform")
                 return
 
             labels = self._parse_semantic(sem_msg)
@@ -550,6 +715,7 @@ def _quat_to_matrix(quat):
             camera_T_lidar = self.camera_T_lidar
             target_T_lidar = self.target_T_lidar
             if camera_T_lidar is None or target_T_lidar is None:
+                rospy.logdebug("Skipping frame: missing LiDAR transforms")
                 return
 
             labels = self._parse_semantic(sem_msg)
@@ -592,7 +758,8 @@ def _quat_to_matrix(quat):
 
 
 def main():
-    rospy.init_node("semantic_pcl_node")
+    log_level = rospy.DEBUG if _rosargv_bool("debug", False) else rospy.INFO
+    rospy.init_node("semantic_pcl_node", log_level=log_level)
     node = SemanticPclNode()
     rospy.spin()
 

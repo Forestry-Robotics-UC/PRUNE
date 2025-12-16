@@ -1,4 +1,6 @@
 <launch>
+  <!-- Tri-state: empty means do not override YAML; set to true/false to override. -->
+  <arg name="debug" default=""/>
   <arg name="use_republish" default="false"/>
   <arg name="semantic_in_topic" default="/semantic/labels"/>
   <arg name="semantic_topic" default="/semantic/labels"/>
@@ -23,5 +25,6 @@
           args="compressed in:=$(arg confidence_in_topic) raw out:=$(arg confidence_topic)"/>
   </group>
 
-  <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node" output="screen" />
+  <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node" output="screen"
+        args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')" />
 </launch>

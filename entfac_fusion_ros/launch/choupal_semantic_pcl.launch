@@ -1,5 +1,7 @@
 <launch>
   <arg name="bags_path" default="/bags"/>
+  <!-- Tri-state: empty means do not override YAML; set to true/false to override. -->
+  <arg name="debug" default=""/>
   <arg name="play_bags" default="true"/>
   <arg name="rate_factor" default="1.0"/>
   <arg name="start_sec" default="0"/>
@@ -36,6 +38,7 @@
             ns="semantic_pcl_node" />
 
   <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node"
-        output="screen" />
+        output="screen"
+        args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')" />
 
 </launch>
