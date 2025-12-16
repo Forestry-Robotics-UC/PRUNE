@@ -65,3 +65,10 @@ def test_palette_stats():
     assert (0 << 16) | (0 << 8) | 0 in packed
     assert (0 << 16) | (0 << 8) | 128 in packed
     assert (0 << 16) | (51 << 8) | 0 in packed
+
+
+def test_palette_merge_distance_reduces_noise():
+    # Two very similar blues should be merged when merge_distance is enabled.
+    rgb = np.array([[[0, 0, 128], [0, 0, 129]]], dtype=np.uint8)
+    assert count_semantic_groups(rgb) == ("colors", 2)
+    assert count_semantic_groups(rgb, color_merge_distance=1) == ("colors", 1)

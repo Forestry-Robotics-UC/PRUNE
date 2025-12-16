@@ -126,6 +126,27 @@ def fuse_lidar_semantics(
         lidar_points.points_xyz, intrinsics, camera_T_lidar, (w, h)
     )
 
+    uv_inside = uv[inside]
+    # Use truncation (floor for positive coords) to keep indices in-bounds.
+    # Rounding can produce u==w or v==h for points close to the image border
+    # (e.g., v=479.6 with h=480 -> round(v)=480), causing IndexError.
+    u = uv_inside[:, 0].astype(int)
+    v = uv_inside[:, 1].astype(int)
+    in_bounds = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+    if not np.all(in_bounds):
+        dropped = int(np.count_nonzero(~in_bounds))
+        LOGGER.debug(
+            "LiDAR projection produced %d/%d borderline indices out of bounds after truncation; dropping them",
+            dropped,
+            int(u.size),
+        )
+        inside_idx = np.nonzero(inside)[0]
+        inside = inside.copy()
+        inside[inside_idx[~in_bounds]] = False
+        uv_inside = uv_inside[in_bounds]
+        u = u[in_bounds]
+        v = v[in_bounds]
+
     labeled_points = lidar_points.points_xyz[inside]
     if labeled_points.shape[0] == 0 and not include_unlabeled:
         LOGGER.warning("LiDAR fusion found no points inside image bounds")
@@ -133,12 +154,10 @@ def fuse_lidar_semantics(
             np.empty((0, 3)), np.empty((0,), dtype=np.int64), None
         )
 
-    uv_valid = uv[inside]
-    # Use truncation (floor for positive coords) to keep indices in-bounds.
-    # Rounding can produce u==w or v==h for points close to the image border
-    # (e.g., v=479.6 with h=480 -> round(v)=480), causing IndexError.
-    u = uv_valid[:, 0].astype(int)
-    v = uv_valid[:, 1].astype(int)
+    if labeled_points.shape[0] != u.shape[0]:
+        raise RuntimeError(
+            "internal error: projected uv count does not match filtered point count"
+        )
     labels = semantic.labels[v, u]
 
     if semantic.confidence is not None:

@@ -2,17 +2,22 @@
 semantic_topic: "/segmentation/test"
 confidence_topic: ""
 camera_info: "/realsense/aligned_depth_to_color/camera_info"
-depth_input_topic: "/livox/lidar"  # LiDAR geometry input (PointCloud2)
+depth_input_topic: "/realsense/aligned_depth_to_color/image_raw"  # Either PointCloud2 or DepthImage
 target_frame: "base_link"
 include_unlabeled_pts: false
 debug: false
 auto_color_to_label: true
 auto_color_to_label_extend: false
+auto_color_to_label_min_fraction: 0.001
+auto_color_to_label_min_count: 1
+auto_color_to_label_max_colors: 16
 semantic_color_quantization_step: 16  # helps reduce JPEG palette artifacts in compressed segmentation outputs
+auto_color_to_label_merge_distance: 16
 colorize_labels: true
 color_map: {}
 downsample_factor: 1
 enable_profiling: false
+depth_scale: 0.0  # 0=auto (16UC1/mono16 treated as mm)
 
 # Optional static extrinsics (row-major 4x4). If empty, TF lookup is used.
 static_target_T_depth: []      # depth frame -> target frame

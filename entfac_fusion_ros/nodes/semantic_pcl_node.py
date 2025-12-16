@@ -60,7 +60,11 @@ from entfac_fusion_core.types import (
     SemanticObservation,
 )
 from entfac_fusion_core.utils.validation import require_homogeneous_transform
-from entfac_fusion_core.utils.semantics import count_semantic_groups
+from entfac_fusion_core.utils.semantics import (
+    count_semantic_groups,
+    dominant_packed_colors,
+    packed_rgb_to_triplets,
+)
 
 
 class _RospyLogHandler(logging.Handler):
@@ -369,6 +373,27 @@ class SemanticPclNode:
             False,
             "If true and semantic images are RGB/BGR, build a deterministic color->label mapping from observed colors.",
         )
+        self.auto_color_to_label_min_fraction = self._get_param_float(
+            "~auto_color_to_label_min_fraction",
+            0.0005,
+            "Auto palette filter: keep colors covering at least this fraction of pixels (helps with JPEG artifacts). Set 0 to disable.",
+        )
+        if not (0.0 <= self.auto_color_to_label_min_fraction <= 1.0):
+            raise ValueError("~auto_color_to_label_min_fraction must be in [0, 1]")
+        self.auto_color_to_label_min_count = self._get_param_int(
+            "~auto_color_to_label_min_count",
+            1,
+            "Auto palette filter: keep colors with at least this many pixels (>=1).",
+        )
+        if self.auto_color_to_label_min_count < 1:
+            raise ValueError("~auto_color_to_label_min_count must be >= 1")
+        self.auto_color_to_label_max_colors = self._get_param_int(
+            "~auto_color_to_label_max_colors",
+            64,
+            "Auto palette cap: if more colors are detected, keep only the most frequent ones (>=1).",
+        )
+        if self.auto_color_to_label_max_colors < 1:
+            raise ValueError("~auto_color_to_label_max_colors must be >= 1")
         self.semantic_color_quantization_step = self._get_param_int(
             "~semantic_color_quantization_step",
             1,
@@ -376,6 +401,13 @@ class SemanticPclNode:
         )
         if self.semantic_color_quantization_step < 1:
             raise ValueError("~semantic_color_quantization_step must be >= 1")
+        self.auto_color_to_label_merge_distance = self._get_param_int(
+            "~auto_color_to_label_merge_distance",
+            0,
+            "Auto palette merge: merge similar colors within this RGB distance (after quantization) to reduce JPEG palette noise. 0 disables.",
+        )
+        if self.auto_color_to_label_merge_distance < 0:
+            raise ValueError("~auto_color_to_label_merge_distance must be >= 0")
         self.auto_color_to_label_extend = self._get_param_bool(
             "~auto_color_to_label_extend",
             True,
@@ -384,7 +416,12 @@ class SemanticPclNode:
         self._inverse_color_map = None
         self._packed_to_label = None
         self._auto_color_decode = False
+        self._auto_palette_packed = None
+        self._auto_palette_rgb = None
         self._warned_unknown_colors = False
+        self._logged_depth_scaling = False
+        self._logged_depth_summary = False
+        self._logged_lidar_summary = False
         self.downsample_factor = self._get_param_int(
             "~downsample_factor",
             1,
@@ -397,6 +434,13 @@ class SemanticPclNode:
             False,
             "If true, print a short cProfile summary per callback (future C++/numba profiling hook).",
         )
+        self.depth_scale = self._get_param_float(
+            "~depth_scale",
+            0.0,
+            "Scale factor to convert depth values to meters (0=auto: 16UC1/mono16 treated as mm -> 0.001; 32FC1 treated as meters -> 1.0).",
+        )
+        if self.depth_scale < 0.0:
+            raise ValueError("~depth_scale must be >= 0")
         self.static_target_T_depth = self._get_matrix_param(
             "~static_target_T_depth",
             "Optional static 4x4 row-major matrix: depth_frame -> target_frame. Overrides TF.",
@@ -447,6 +491,11 @@ class SemanticPclNode:
         )
         self.pcl_pub = rospy.Publisher(
             "semantic_pointcloud", PointCloud2, queue_size=1
+        )
+        self._loginfo(
+            "__init__",
+            "Publishing PointCloud2 on topic=%s",
+            rospy.resolve_name("semantic_pointcloud"),
         )
         self.target_T_depth = None
         self.camera_T_lidar = None
@@ -518,6 +567,12 @@ class SemanticPclNode:
     def _get_param_int(self, name, default, description):
         raw = self._get_param(name, default, description)
         val = int(raw)
+        self._param_meta[name]["value"] = val
+        return val
+
+    def _get_param_float(self, name, default, description):
+        raw = self._get_param(name, default, description)
+        val = float(raw)
         self._param_meta[name]["value"] = val
         return val
 
@@ -927,74 +982,119 @@ class SemanticPclNode:
         self._auto_color_decode = False
 
     def _set_auto_color_decoder_from_packed(self, packed):
-        unique = np.unique(packed.reshape(-1).astype(np.uint32))
-        if unique.size > 65535:
-            raise ValueError(
-                f"auto_color_to_label found {unique.size} unique colors; exceeds uint16 label range"
-            )
-        labels_sorted = np.arange(unique.size, dtype=np.int32)
-        self._inverse_color_map = (unique, labels_sorted)
-        self._packed_to_label = {int(k): int(i) for i, k in enumerate(unique.tolist())}
-        self._auto_color_decode = True
+        flat = packed.reshape(-1).astype(np.uint32)
+        unique, counts = np.unique(flat, return_counts=True)
+        total = int(flat.size)
+        min_count_eff = max(
+            int(self.auto_color_to_label_min_count),
+            int(np.ceil(float(self.auto_color_to_label_min_fraction) * total)),
+        )
 
-        # Also populate color_map so output can reproduce the palette.
+        raw_unique = int(unique.size)
+        filtered_count = int(np.count_nonzero(counts >= int(min_count_eff)))
+
+        palette = dominant_packed_colors(
+            packed,
+            min_count=int(self.auto_color_to_label_min_count),
+            min_fraction=float(self.auto_color_to_label_min_fraction),
+            max_colors=int(self.auto_color_to_label_max_colors),
+            merge_distance=int(self.auto_color_to_label_merge_distance),
+        )
+        if palette.size == 0:
+            raise ValueError("auto_color_to_label produced an empty palette")
+        if palette.size > 65535:
+            raise ValueError(
+                f"auto_color_to_label found {palette.size} palette colors; exceeds uint16 label range"
+            )
+
+        self._auto_palette_packed = palette.astype(np.uint32, copy=False)
+        self._auto_palette_rgb = packed_rgb_to_triplets(self._auto_palette_packed)
+
+        # Deterministic label IDs: sort by packed RGB.
+        palette_labels = np.arange(self._auto_palette_packed.size, dtype=np.int32)
+
+        # Publishable color_map: label_id -> [r,g,b].
         self.color_map = {}
-        for label_id, packed_val in enumerate(unique.tolist()):
-            r = (packed_val >> 16) & 0xFF
-            g = (packed_val >> 8) & 0xFF
-            b = packed_val & 0xFF
-            self.color_map[int(label_id)] = [int(r), int(g), int(b)]
+        for label_id, rgb in enumerate(self._auto_palette_rgb.tolist()):
+            self.color_map[int(label_id)] = [int(rgb[0]), int(rgb[1]), int(rgb[2])]
         self._color_map_revision += 1
+
+        # Build a full decoder for all colors seen in this first frame by snapping
+        # each observed color to the nearest palette entry (robust to JPEG noise).
+        mapped = self._nearest_palette_labels_for_packed(unique)
+        self._packed_to_label = {
+            int(k): int(v) for k, v in zip(unique.tolist(), mapped.tolist())
+        }
+        self._inverse_color_map = self._build_inverse_from_mapping_dict(
+            self._packed_to_label
+        )
+        self._auto_color_decode = True
 
         self._loginfo(
             "_set_auto_color_decoder_from_packed",
-            "Auto color->label mapping: %d unique colors mapped to labels 0..%d (sorted by packed RGB).",
-            int(unique.size),
-            int(unique.size - 1),
+            "Auto palette→label decoder ready: palette=%d (raw_unique=%d filtered=%d min_count_eff=%d merge_distance=%d max_colors=%d).",
+            int(self._auto_palette_packed.size),
+            int(raw_unique),
+            int(filtered_count),
+            int(min_count_eff),
+            int(self.auto_color_to_label_merge_distance),
+            int(self.auto_color_to_label_max_colors),
         )
 
+    def _build_inverse_from_mapping_dict(self, mapping_dict):
+        keys_sorted = np.asarray(sorted(mapping_dict.keys()), dtype=np.uint32)
+        labels_sorted = np.asarray(
+            [mapping_dict[int(k)] for k in keys_sorted.tolist()], dtype=np.int32
+        )
+        return keys_sorted, labels_sorted
+
+    def _nearest_palette_labels_for_packed(self, packed_values):
+        if self._auto_palette_rgb is None:
+            raise RuntimeError("auto palette not initialized")
+        values = np.asarray(packed_values, dtype=np.uint32).reshape(-1)
+        rgb_vals = packed_rgb_to_triplets(values).astype(np.int16, copy=False)
+        palette_rgb = self._auto_palette_rgb.astype(np.int16, copy=False)
+        diff = rgb_vals[:, None, :] - palette_rgb[None, :, :]
+        dist2 = np.sum(diff * diff, axis=2)
+        nearest = np.argmin(dist2, axis=1).astype(np.int32)
+        return nearest.reshape(np.asarray(packed_values).shape)
+
     def _extend_auto_color_decoder(self, packed, labels):
-        if not self._auto_color_decode or not self.auto_color_to_label_extend:
+        if not self._auto_color_decode:
             return labels
         unknown_mask = labels == -1
         if not np.any(unknown_mask):
             return labels
+        unknown_vals = np.unique(packed[unknown_mask].reshape(-1).astype(np.uint32))
+        mapped = self._nearest_palette_labels_for_packed(unknown_vals)
 
-        unknown = np.unique(packed[unknown_mask].reshape(-1).astype(np.uint32))
-        if unknown.size == 0:
-            return labels
-
-        next_id = len(self._packed_to_label)
-        if next_id + unknown.size > 65535:
-            raise ValueError(
-                f"auto_color_to_label would exceed uint16 label range after adding {unknown.size} new colors"
+        if self.auto_color_to_label_extend:
+            # Cache the new colors for faster lookup in later frames (label IDs do
+            # NOT change; new colors are snapped to the existing palette).
+            for packed_val, label_id in zip(unknown_vals.tolist(), mapped.tolist()):
+                self._packed_to_label[int(packed_val)] = int(label_id)
+            self._inverse_color_map = self._build_inverse_from_mapping_dict(
+                self._packed_to_label
             )
+            self._logdebug(
+                "_extend_auto_color_decoder",
+                "Cached %d new colors to nearest palette labels (mapping_size=%d palette=%d).",
+                int(unknown_vals.size),
+                int(len(self._packed_to_label)),
+                int(self._auto_palette_packed.size)
+                if self._auto_palette_packed is not None
+                else -1,
+            )
+            return self._packed_color_to_label(packed, self._inverse_color_map)
 
-        for packed_val in unknown.tolist():
-            if int(packed_val) in self._packed_to_label:
-                continue
-            self._packed_to_label[int(packed_val)] = int(next_id)
-            r = (int(packed_val) >> 16) & 0xFF
-            g = (int(packed_val) >> 8) & 0xFF
-            b = int(packed_val) & 0xFF
-            self.color_map[int(next_id)] = [int(r), int(g), int(b)]
-            next_id += 1
-        self._color_map_revision += 1
-
-        keys_sorted = np.asarray(sorted(self._packed_to_label.keys()), dtype=np.uint32)
-        labels_sorted = np.asarray(
-            [self._packed_to_label[int(k)] for k in keys_sorted.tolist()],
-            dtype=np.int32,
-        )
-        self._inverse_color_map = (keys_sorted, labels_sorted)
-
-        self._logwarn(
-            "_extend_auto_color_decoder",
-            "Extended auto color->label mapping with %d new colors (total=%d).",
-            int(unknown.size),
-            int(len(self._packed_to_label)),
-        )
-        return self._packed_color_to_label(packed, self._inverse_color_map)
+        # Decode unknown colors for this frame only (no caching).
+        mapped_out = labels.copy()
+        unknown_sorted = np.sort(unknown_vals.astype(np.uint32))
+        mapped_sorted = mapped.reshape(-1)[np.argsort(unknown_vals)]
+        flat_unknown = packed[unknown_mask].reshape(-1).astype(np.uint32)
+        idx = np.searchsorted(unknown_sorted, flat_unknown)
+        mapped_out[unknown_mask] = mapped_sorted[idx]
+        return mapped_out
 
     @staticmethod
     def _scale_intrinsics(intrinsics, factor):
@@ -1184,14 +1284,19 @@ class SemanticPclNode:
                     kind, count = count_semantic_groups(
                         data[:, :, :3],
                         color_quantize_step=self.semantic_color_quantization_step,
+                        color_min_count=self.auto_color_to_label_min_count,
+                        color_min_fraction=self.auto_color_to_label_min_fraction,
+                        color_max_colors=self.auto_color_to_label_max_colors,
+                        color_merge_distance=self.auto_color_to_label_merge_distance,
                     )
                     self._logwarn(
                         "_parse_semantic",
-                        "RGB semantic image detected (%s=%d, quantize_step=%d). No ~color_map provided; using auto_color_to_label mapping. "
+                        "RGB semantic image detected (%s=%d, quantize_step=%d, merge_distance=%d). No ~color_map provided; using auto_color_to_label mapping. "
                         "Provide ~color_map for stable class IDs.",
                         kind,
                         int(count),
                         int(self.semantic_color_quantization_step),
+                        int(self.auto_color_to_label_merge_distance),
                     )
                     self._set_auto_color_decoder_from_packed(
                         self._rgb_to_packed(
@@ -1210,7 +1315,7 @@ class SemanticPclNode:
                 data, encoding, quantize_step=self.semantic_color_quantization_step
             )
             labels = self._packed_color_to_label(packed, self._inverse_color_map)
-            if self._auto_color_decode and self.auto_color_to_label_extend:
+            if self._auto_color_decode and np.any(labels == -1):
                 return self._extend_auto_color_decoder(packed, labels)
 
             if (
@@ -1294,7 +1399,8 @@ class SemanticPclNode:
                     return
 
             labels = self._parse_semantic(sem_msg)
-            depth = self._image_to_numpy(depth_msg).astype(float)
+            depth_raw = self._image_to_numpy(depth_msg)
+            depth_enc = depth_msg.encoding.lower()
             confidence = (
                 self._image_to_numpy(conf_msg).astype(float) if conf_msg else None
             )
@@ -1302,12 +1408,52 @@ class SemanticPclNode:
             if self.downsample_factor > 1:
                 f = self.downsample_factor
                 labels = labels[::f, ::f]
-                depth = depth[::f, ::f]
+                depth_raw = depth_raw[::f, ::f]
                 if confidence is not None:
                     confidence = confidence[::f, ::f]
                 intrinsics = self._scale_intrinsics(self.intrinsics, f)
             else:
                 intrinsics = self.intrinsics
+
+            scale = float(self.depth_scale)
+            if scale == 0.0:
+                if depth_enc in ("16uc1", "16sc1", "mono16"):
+                    scale = 0.001
+                else:
+                    scale = 1.0
+            if self.debug and not self._logged_depth_scaling:
+                self._loginfo(
+                    "_depth_callback",
+                    "Depth scaling: encoding=%s scale=%.6f (depth_scale_param=%.6f)",
+                    depth_msg.encoding,
+                    float(scale),
+                    float(self.depth_scale),
+                )
+                self._logged_depth_scaling = True
+
+            depth = depth_raw.astype(np.float32, copy=False) * float(scale)
+            if confidence is not None:
+                confidence = confidence.astype(np.float32, copy=False)
+
+            if self.debug and not self._logged_depth_summary:
+                valid = np.isfinite(depth) & (depth > 0)
+                valid_count = int(np.count_nonzero(valid))
+                if valid_count:
+                    dmin = float(depth[valid].min())
+                    dmax = float(depth[valid].max())
+                else:
+                    dmin, dmax = float("nan"), float("nan")
+                self._loginfo(
+                    "_depth_callback",
+                    "Depth inputs: semantic_shape=%s depth_shape=%s depth_encoding=%s valid_depth=%d min=%.3f max=%.3f downsample=%d",
+                    labels.shape,
+                    depth.shape,
+                    depth_msg.encoding,
+                    valid_count,
+                    dmin,
+                    dmax,
+                    int(self.downsample_factor),
+                )
 
             semantic_obs = SemanticObservation(labels=labels, confidence=confidence)
             depth_obs = DepthObservation(depth=depth)
@@ -1319,18 +1465,40 @@ class SemanticPclNode:
                 include_unlabeled=self.include_unlabeled,
             )
             self._logdebug(
-            "_depth_callback",
-            "Publishing depth-based semantic PCL with %d points",
-            pcl.points_xyz.shape[0],
-        )
-        pcl_msg = semantic_pointcloud_to_msg(
-            pcl,
-            self.target_frame,
-            stamp,
-            colorize_labels=self.colorize_labels,
-            rgb_lut=self._get_rgb_float_lut(),
-        )
-        self.pcl_pub.publish(pcl_msg)
+                "_depth_callback",
+                "Publishing depth-based semantic PCL with %d points",
+                pcl.points_xyz.shape[0],
+            )
+            if self.debug and not self._logged_depth_summary:
+                if pcl.points_xyz.shape[0]:
+                    mins = pcl.points_xyz.min(axis=0)
+                    maxs = pcl.points_xyz.max(axis=0)
+                    self._loginfo(
+                        "_depth_callback",
+                        "Depth PCL bbox in %s: x=[%.3f, %.3f] y=[%.3f, %.3f] z=[%.3f, %.3f]",
+                        self.target_frame,
+                        float(mins[0]),
+                        float(maxs[0]),
+                        float(mins[1]),
+                        float(maxs[1]),
+                        float(mins[2]),
+                        float(maxs[2]),
+                    )
+                else:
+                    self._logwarn(
+                        "_depth_callback",
+                        "Depth fusion produced empty point cloud (check depth scaling, intrinsics, and transforms)",
+                    )
+                self._logged_depth_summary = True
+
+            pcl_msg = semantic_pointcloud_to_msg(
+                pcl,
+                self.target_frame,
+                stamp,
+                colorize_labels=self.colorize_labels,
+                rgb_lut=self._get_rgb_float_lut(),
+            )
+            self.pcl_pub.publish(pcl_msg)
 
     def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None):
         with self._maybe_profile("lidar_callback"):
@@ -1404,11 +1572,33 @@ class SemanticPclNode:
                 target_T_lidar,
                 include_unlabeled=self.include_unlabeled,
             )
-            self._loginfo(
+            self._logdebug(
                 "_lidar_callback",
                 "Publishing LiDAR-based semantic PCL with %d points",
                 pcl.points_xyz.shape[0],
             )
+            if self.debug and not self._logged_lidar_summary:
+                if pcl.points_xyz.shape[0]:
+                    mins = pcl.points_xyz.min(axis=0)
+                    maxs = pcl.points_xyz.max(axis=0)
+                    self._loginfo(
+                        "_lidar_callback",
+                        "LiDAR PCL bbox in %s: x=[%.3f, %.3f] y=[%.3f, %.3f] z=[%.3f, %.3f] (input_points=%d)",
+                        self.target_frame,
+                        float(mins[0]),
+                        float(maxs[0]),
+                        float(mins[1]),
+                        float(maxs[1]),
+                        float(mins[2]),
+                        float(maxs[2]),
+                        int(points.shape[0]),
+                    )
+                else:
+                    self._logwarn(
+                        "_lidar_callback",
+                        "LiDAR fusion produced empty point cloud (check intrinsics, transforms, and image alignment)",
+                    )
+                self._logged_lidar_summary = True
             pcl_msg = semantic_pointcloud_to_msg(
                 pcl,
                 self.target_frame,

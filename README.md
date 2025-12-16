@@ -70,8 +70,10 @@ pcl = fuse_depth_semantics(
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
   - `~auto_color_to_label`: if the semantic image is RGB/BGR and `~color_map` is empty, infer a deterministic palette→label mapping (sorted by packed RGB).
-  - `~auto_color_to_label_extend`: extend the inferred mapping when new colors appear in later frames.
+  - `~auto_color_to_label_extend`: cache new colors when they appear by snapping them to the inferred palette (label IDs do not grow).
+  - `~auto_color_to_label_min_fraction`, `~auto_color_to_label_min_count`, `~auto_color_to_label_max_colors`: filters/caps the inferred palette (useful for JPEG artifacts).
   - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before color→label decode (set to 8/16 for JPEG artifacts; 1 disables).
+  - `~auto_color_to_label_merge_distance`: merge similar colors (after quantization) to reduce JPEG palette noise.
   - `~colorize_labels`: add an `rgb` field based on label IDs (default false).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~enable_profiling`: cProfile summary per callback (off by default).
@@ -159,7 +161,11 @@ pytest -q
 - If the semantic topic is a 3/4-channel palette image (`rgb8`, `bgr8`, `rgba8`, `bgra8`), the node must convert colors → label IDs to populate the `label` field and run fusion.
   Options:
   - Recommended: set `semantic_pcl_node/color_map` for stable, correct class IDs.
-  - Debug-friendly: set `semantic_pcl_node/auto_color_to_label:=true` to infer a deterministic mapping from observed colors (label IDs will be assigned by sorted packed RGB).
+  - Debug-friendly: set `semantic_pcl_node/auto_color_to_label:=true` to infer a palette and snap observed colors to the nearest palette entry (robust to JPEG artifacts).
+
+Notes:
+- If your semantic image is transported as `image_transport/compressed` using JPEG, the decoded image can contain many near-duplicate colors even if you only have a handful of classes. Republish cannot recover the original palette; prefer publishing class IDs (single-channel) or use lossless PNG compression upstream.
+- For JPEG/noisy palette streams, tune `semantic_color_quantization_step` (8/16), `auto_color_to_label_merge_distance`, and cap `auto_color_to_label_max_colors` to match your expected class count.
 
 Example `color_map` (original semfire palette):
 ```yaml

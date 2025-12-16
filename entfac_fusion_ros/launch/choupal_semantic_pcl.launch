@@ -4,7 +4,7 @@
   <arg name="play_bags" default="true"/>
   <arg name="rate_factor" default="1.0"/>
   <arg name="start_sec" default="200"/>
-  <arg name="pause" default="false"/>
+  <arg name="pause" default="true"/>
   <arg name="bag_choupal" default="$(arg bags_path)/choupal.bag"/>
   <arg name="bag_localization" default="$(arg bags_path)/localization_15Hz.bag"/>
   <arg name="bag_segmentation"
