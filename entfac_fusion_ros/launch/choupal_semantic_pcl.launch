@@ -1,26 +1,26 @@
 <launch>
   <arg name="bags_path" default="/bags"/>
-  <!-- Tri-state: empty means do not override YAML; set to true/false to override. -->
-  <arg name="debug" default=""/>
+  <arg name="debug" default="true"/>
   <arg name="play_bags" default="true"/>
   <arg name="rate_factor" default="1.0"/>
-  <arg name="start_sec" default="0"/>
-  <arg name="pause" default="true"/>
+  <arg name="start_sec" default="200"/>
+  <arg name="pause" default="false"/>
   <arg name="bag_choupal" default="$(arg bags_path)/choupal.bag"/>
   <arg name="bag_localization" default="$(arg bags_path)/localization_15Hz.bag"/>
   <arg name="bag_segmentation"
        default="$(arg bags_path)/segmentation_segnext_over_canopy_w_pcl.bag"/>
 
-  <group if="$(arg play_bags)">
-	    <param name="use_sim_time" value="true"/>
-	    <node pkg="rosbag" type="play" name="play_bags" output="screen"
-	          if="$(arg pause)"
-	          args="--clock --pause -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
-	    <node pkg="rosbag" type="play" name="play_bags" output="screen"
-	          unless="$(arg pause)"
-	          args="--clock -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
-	  </group>
+<group if="$(arg play_bags)">
+  <param name="use_sim_time" value="true"/>
 
+  <node pkg="rosbag" type="play" name="play_bags_paused" output="screen"
+        if="$(arg pause)"
+        args="--clock --pause -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
+
+  <node pkg="rosbag" type="play" name="play_bags_running" output="screen"
+        unless="$(arg pause)"
+        args="--clock -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
+</group>
   <!-- TF tree from URDF in the bag folder (sensor-box.urdf). -->
   <include file="$(find entfac_fusion_ros)/launch/choupal_tf.launch">
     <arg name="bags_path" value="$(arg bags_path)"/>
