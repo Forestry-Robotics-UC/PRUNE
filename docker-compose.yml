@@ -1,15 +1,15 @@
 services:
-  sensor-fusion-ros:
-    image: ros-entfac:latest
-    container_name: entfac_sensor_fusion_ros
-    volumes:
-      - /mnt/bumble/entfac_utils/ENTFAC-Sensor-Fusion/:/home/ros/ws/src/entfac_fusion:rw
-      # TODO: update the host path to your bag directory
-      - /mnt/phd/datasets/choupal_v2:/bags:ro
-    working_dir: /home/ros/ws
-    tty: true
-    stdin_open: true
-    command: ["/bin/bash"]
+  # sensor-fusion-ros:
+  #   image: ros-entfac:latest
+  #   container_name: entfac_sensor_fusion_ros
+  #   volumes:
+  #     - /mnt/bumble/entfac_utils/ENTFAC-Sensor-Fusion/:/home/ros/ws/src/entfac_fusion:rw
+  #     # TODO: update the host path to your bag directory
+  #     - /mnt/phd/datasets/choupal_v2:/bags:ro
+  #   working_dir: /home/ros/ws
+  #   tty: true
+  #   stdin_open: true
+  #   command: ["/bin/bash"]
 
   # Optional GUI container (RViz, rqt, etc) displayed on the host via X11.
   # Host prereq (run once per session): `xhost +si:localuser:$(whoami)`

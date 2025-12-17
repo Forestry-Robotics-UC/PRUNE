@@ -10,17 +10,18 @@
   <arg name="bag_segmentation"
        default="$(arg bags_path)/segmentation_segnext_over_canopy_w_pcl.bag"/>
 
-<group if="$(arg play_bags)">
-  <param name="use_sim_time" value="true"/>
+  <group if="$(arg play_bags)">
+    <param name="use_sim_time" value="true"/>
 
-  <node pkg="rosbag" type="play" name="play_bags_paused" output="screen"
-        if="$(arg pause)"
-        args="--clock --pause -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
+    <node pkg="rosbag" type="play" name="play_bags_paused" output="screen"
+          if="$(arg pause)"
+          args="--clock --pause -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
 
-  <node pkg="rosbag" type="play" name="play_bags_running" output="screen"
-        unless="$(arg pause)"
-        args="--clock -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
-</group>
+    <node pkg="rosbag" type="play" name="play_bags_running" output="screen"
+          unless="$(arg pause)"
+          args="--clock -r $(arg rate_factor) -s $(arg start_sec) $(arg bag_choupal) $(arg bag_localization) $(arg bag_segmentation)"/>
+  </group>
+
   <!-- TF tree from URDF in the bag folder (sensor-box.urdf). -->
   <include file="$(find entfac_fusion_ros)/launch/choupal_tf.launch">
     <arg name="bags_path" value="$(arg bags_path)"/>
@@ -29,12 +30,11 @@
   <!-- Republish compressed semantic images to raw Image for the fusion node. -->
   <node pkg="image_transport" type="republish" name="semantic_republish"
         output="screen"
-        args="compressed in:=/segmentation/test raw out:=/segmentation/test" />
-    <node pkg="image_transport" 
-          type="republish" 
-          name="realsense_depth" 
-          args="compressedDepth in:=/realsense/aligned_depth_to_color/image_raw
-                raw out:=/realsense/aligned_depth_to_color/image_raw"/>
+        args="compressed in:=/segmentation/test raw out:=/segmentation/test"/>
+
+  <node pkg="image_transport" type="republish" name="realsense_depth"
+        output="screen"
+        args="compressedDepth in:=/realsense/aligned_depth_to_color/image_raw raw out:=/realsense/aligned_depth_to_color/image_raw"/>
 
   <!-- Load node parameters (topics, target_frame, downsample, color_map, etc.). -->
   <rosparam file="$(find entfac_fusion_ros)/config/choupal_semantic_pcl.yaml"

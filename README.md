@@ -61,7 +61,8 @@ pcl = fuse_depth_semantics(
 
 ## ROS Node (`semantic_pcl_node.py`)
 - Parameters:
-  - `~semantic_topic`: single-channel semantic labels (Image).
+  - `~semantic_topic`: semantic image (label IDs or RGB colors).
+  - `~semantic_input_type`: `labels` (single-channel label IDs) or `rgb` (3-channel colors used directly for output coloring).
   - `~confidence_topic` (optional): confidence image aligned to semantic labels.
   - `~camera_info`: CameraInfo for intrinsics + frame id.
   - `~depth_input_topic`: geometry input topic; set to either a depth `sensor_msgs/Image` or a `sensor_msgs/PointCloud2` (LiDAR). The node auto-detects which and selects the fusion mode.
@@ -69,12 +70,8 @@ pcl = fuse_depth_semantics(
   - Mode auto-detected from `~depth_input_topic` (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
-  - `~auto_color_to_label`: if the semantic image is RGB/BGR and `~color_map` is empty, infer a deterministic palette→label mapping (sorted by packed RGB).
-  - `~auto_color_to_label_extend`: cache new colors when they appear by snapping them to the inferred palette (label IDs do not grow).
-  - `~auto_color_to_label_min_fraction`, `~auto_color_to_label_min_count`, `~auto_color_to_label_max_colors`: filters/caps the inferred palette (useful for JPEG artifacts).
-  - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before color→label decode (set to 8/16 for JPEG artifacts; 1 disables).
-  - `~auto_color_to_label_merge_distance`: merge similar colors (after quantization) to reduce JPEG palette noise.
-  - `~colorize_labels`: add an `rgb` field based on label IDs (default false).
+  - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before packing for the PointCloud2 `rgb` field (set to 8/16 for JPEG artifacts; 1 disables).
+  - `~colorize_labels`: publish PointCloud2 `rgb` (labels: uses `~color_map`; rgb: uses semantic image colors).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~enable_profiling`: cProfile summary per callback (off by default).
   - Extrinsics: provide static 4×4 matrices (`~static_target_T_depth`,
@@ -157,26 +154,25 @@ pytest -q
 - Param precedence: YAML loaded via `rosparam` sets defaults; later `<param>` tags override. Avoid setting empty-string params in launch files since they overwrite YAML.
 
 ## Semantic colors
-- If the semantic topic is a single-channel label image (`mono8`, `16UC1`, `32SC1`), no palette is needed.
-- If the semantic topic is a 3/4-channel palette image (`rgb8`, `bgr8`, `rgba8`, `bgra8`), the node must convert colors → label IDs to populate the `label` field and run fusion.
-  Options:
-  - Recommended: set `semantic_pcl_node/color_map` for stable, correct class IDs.
-  - Debug-friendly: set `semantic_pcl_node/auto_color_to_label:=true` to infer a palette and snap observed colors to the nearest palette entry (robust to JPEG artifacts).
+- Set `semantic_pcl_node/semantic_input_type:=labels` when `~semantic_topic` is a single-channel label image (`mono8`, `16UC1`, `32SC1`).
+- Set `semantic_pcl_node/semantic_input_type:=rgb` when `~semantic_topic` is a 3/4-channel color image (`rgb8`, `bgr8`, `rgba8`, `bgra8`).
+  - This mode uses the semantic image colors directly for the PointCloud2 `rgb` field (no decoding).
+  - The PointCloud2 `label` field is set to “unknown” (`65535`) because no label IDs are provided.
+  - If your stream is JPEG-compressed, tune `semantic_color_quantization_step` (8/16) to reduce near-duplicate colors before packing.
 
 Notes:
 - If your semantic image is transported as `image_transport/compressed` using JPEG, the decoded image can contain many near-duplicate colors even if you only have a handful of classes. Republish cannot recover the original palette; prefer publishing class IDs (single-channel) or use lossless PNG compression upstream.
-- For JPEG/noisy palette streams, tune `semantic_color_quantization_step` (8/16), `auto_color_to_label_merge_distance`, and cap `auto_color_to_label_max_colors` to match your expected class count.
 
 Example `color_map` (original semfire palette):
 ```yaml
 color_map:
-  0: [0, 0, 0]        # Background
-  1: [0, 0, 128]      # Fuel
-  2: [0, 50, 100]     # Trunks
-  3: [0, 213, 255]    # Humans
-  4: [163, 0, 128]    # Animals
-  5: [0, 51, 0]       # Canopies
-  6: [165, 165, 165]  # Traversable
+  "0": [0, 0, 0]        # Background
+  "1": [0, 0, 128]      # Fuel
+  "2": [0, 50, 100]     # Trunks
+  "3": [0, 213, 255]    # Humans
+  "4": [163, 0, 128]    # Animals
+  "5": [0, 51, 0]       # Canopies
+  "6": [165, 165, 165]  # Traversable
 ```
 
 ## Notes on design and performance

@@ -1,19 +1,14 @@
 semantic_topic: "/semantic/labels"
+semantic_input_type: "labels"  # "labels" or "rgb" (original colors)
 confidence_topic: ""          # optional
 camera_info: "/camera/color/camera_info"
 depth_input_topic: "/camera/depth/image_rect_raw"  # geometry input: depth Image or LiDAR PointCloud2
 target_frame: "base_link"
 include_unlabeled_pts: false
 debug: false                 # if true, node prints full startup parameter report
-auto_color_to_label: true    # if semantic image is RGB/BGR and color_map is empty, infer palette -> label IDs
-auto_color_to_label_extend: true  # if true (auto mode), cache new colors by snapping them to the inferred palette
-auto_color_to_label_min_fraction: 0.0005  # keep colors covering >= this fraction of pixels (filters JPEG artifacts)
-auto_color_to_label_min_count: 1          # keep colors with >= this many pixels (>=1)
-auto_color_to_label_max_colors: 64        # cap inferred palette size (keeps most frequent colors)
-semantic_color_quantization_step: 1  # set to 8/16 for JPEG-compressed palette images to reduce color noise
-auto_color_to_label_merge_distance: 0  # merge similar colors within this RGB distance after quantization (helps JPEG artifacts); 0 disables
-colorize_labels: false        # add PointCloud2 rgb field
-color_map: {}                 # optional: {label_id: [r,g,b], ...} for coloring + color->label decode
+semantic_color_quantization_step: 1  # used only for rgb input (set to 8/16 for JPEG artifacts)
+colorize_labels: false        # publish PointCloud2 rgb field (labels: uses color_map; rgb: uses semantic image colors)
+color_map: {}                 # {label_id: [r,g,b], ...} used for output coloring when semantic_input_type=labels (quote numeric keys: "0": [r,g,b])
 downsample_factor: 1           # integer >=1; higher saves CPU
 enable_profiling: false
 depth_scale: 0.0               # 0=auto (16UC1/mono16 treated as mm); set to 1.0 if your depth is already in meters
