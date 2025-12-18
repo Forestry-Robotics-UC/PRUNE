@@ -32,8 +32,9 @@ See `LICENSE`.
 - `entfac_fusion_core/`: catkin Python package; numpy-only, ROS-agnostic core.
   - Python sources live in `entfac_fusion_core/src/entfac_fusion_core/`.
 - `entfac_fusion_ros/`: catkin ROS wrapper package.
-  - `nodes/semantic_pcl_node.py`: bridge topics to the core and publish
-    `sensor_msgs/PointCloud2` with fields `x y z label [confidence]`.
+  - `scripts/semantic_pcl_node.py`: roslaunch entrypoint (thin wrapper).
+  - `entfac_fusion_ros/src/entfac_fusion_ros/semantic_pcl_node.py`: node implementation;
+    bridges topics to the core and publishes `sensor_msgs/PointCloud2`.
   - `config/semantic_pcl.yaml`: default parameters with optional static extrinsics.
   - `launch/semantic_pcl.launch`: generic launch (optional image_transport republish).
   - `launch/choupal_semantic_pcl.launch`: Choupal bag demo (bag play + TF + republish).
@@ -68,22 +69,41 @@ pcl = fuse_depth_semantics(
   - `~depth_input_topic`: geometry input topic; set to either a depth `sensor_msgs/Image` or a `sensor_msgs/PointCloud2` (LiDAR). The node auto-detects which and selects the fusion mode.
   - Deprecated: `~depth_topic` and `~lidar_topic` (still supported for backwards-compat).
   - Mode auto-detected from `~depth_input_topic` (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
+  - `~core_debug`: enable DEBUG logs from `entfac_fusion_core` (can be noisy).
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
   - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before packing for the PointCloud2 `rgb` field (set to 8/16 for JPEG artifacts; 1 disables).
-  - `~colorize_labels`: publish PointCloud2 `rgb` (labels: uses `~color_map`; rgb: uses semantic image colors).
+  - `~colorize_labels`: publish PointCloud2 `rgb` (labels: uses `~color_map` if provided, otherwise a deterministic random palette; rgb: uses semantic image colors).
+  - `~random_color_seed`, `~num_labels`: control the deterministic random palette (labels mode only).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~enable_profiling`: cProfile summary per callback (off by default).
+  - `~status_period`: print a periodic ASCII status table (publish rate, point counts).
+  - `~ply_output_dir`: directory for PLY dumps (used by services below).
+  - Services:
+    - `~save_ply` (`std_srvs/Trigger`): save the last published cloud to a PLY file.
+    - `~set_ply_recording` (`std_srvs/SetBool`): enable/disable continuous PLY recording.
   - Extrinsics: provide static 4×4 matrices (`~static_target_T_depth`,
     `~static_camera_T_lidar`, `~static_target_T_lidar`) or rely on TF/URDF.
 - Publishes: `semantic_pointcloud` (`PointCloud2`) with fields `label` and optional
-  `confidence`.
+  `confidence` and `rgb` (when `~colorize_labels:=true`).
+  - Topic can be changed via standard ROS remap, e.g. `roslaunch ... output_topic:=/my_semantic_pcl`.
 - TF: looks up transforms from depth/LiDAR frame to `target_frame`, and from
   LiDAR frame to camera frame when in `lidar` mode.
   Static matrices override TF if provided; TF is resolved once at startup (URDF).
 - Conversions use numpy buffer parsing (no `ros_numpy`) for lower overhead.
 - Logging: core uses Python `logging`; ROS node logs via `rospy` (info for counts,
   warnings when TF/extrinsics are missing or no valid points are found).
+
+### PLY dump services
+```bash
+# Save last published cloud once
+rosservice call /semantic_pcl_node/save_ply "{}"
+
+# Start/stop continuous recording
+rosservice call /semantic_pcl_node/set_ply_recording "data: true"
+rosservice call /semantic_pcl_node/set_ply_recording "data: false"
+```
+Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/ply/`).
 
 ## Extrinsics options
 - Use TF/URDF: provide proper static transforms for camera ↔ depth ↔ target frames.
@@ -118,6 +138,10 @@ docker run --rm entfac-sensor-fusion
   source devel/setup.bash
   roslaunch entfac_fusion_ros choupal_semantic_pcl.launch
   ```
+
+## Documentation
+- Build locally: `pip install -r docs/requirements.txt && sphinx-build -b html docs docs/_build/html`
+- Public API (v1.0): `docs/manual/public_api.md`
   Bags are available under `/bags`.
 
 ## Docker (ROS + GUI / RViz)

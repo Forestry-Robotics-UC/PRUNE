@@ -6,12 +6,17 @@ depth_input_topic: "/camera/depth/image_rect_raw"  # geometry input: depth Image
 target_frame: "base_link"
 include_unlabeled_pts: false
 debug: false                 # if true, node prints full startup parameter report
+core_debug: false            # if true, enable entfac_fusion_core DEBUG logs (can be noisy)
 semantic_color_quantization_step: 1  # used only for rgb input (set to 8/16 for JPEG artifacts)
 colorize_labels: false        # publish PointCloud2 rgb field (labels: uses color_map; rgb: uses semantic image colors)
 color_map: {}                 # {label_id: [r,g,b], ...} used for output coloring when semantic_input_type=labels (quote numeric keys: "0": [r,g,b])
+random_color_seed: 1          # used only when colorize_labels=true and color_map is empty (deterministic random palette)
+num_labels: 0                 # 0=auto from first labels image (used only for random palette)
 downsample_factor: 1           # integer >=1; higher saves CPU
 enable_profiling: false
 depth_scale: 0.0               # 0=auto (16UC1/mono16 treated as mm); set to 1.0 if your depth is already in meters
+status_period: ""              # empty=auto (1s when debug=true, else disabled); set to 0 to disable explicitly
+ply_output_dir: ""             # empty uses <entfac_fusion_ros>/output/ply; used by ~save_ply / ~set_ply_recording
 
 # Optional static extrinsics (row-major 4x4). If empty, TF lookup is used.
 static_target_T_depth: []      # depth frame -> target frame

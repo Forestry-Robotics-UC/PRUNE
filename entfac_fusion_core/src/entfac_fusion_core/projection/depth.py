@@ -44,8 +44,19 @@ def _meshgrid(shape):
 def depth_to_points(depth: np.ndarray, intrinsics: np.ndarray):
     """Convert a depth image into 3D points in the camera frame.
 
-    Returns (points, mask) where mask selects valid (finite, >0) depth entries.
-    Meshgrid is cached per shape to reduce allocations.
+    Args:
+        depth: Depth image with shape ``(H, W)``.
+        intrinsics: Camera intrinsics matrix ``K`` with shape ``(3, 3)``.
+
+    Returns:
+        Tuple ``(points_xyz, valid_mask)``:
+        - ``points_xyz`` has shape ``(N, 3)`` in the camera frame.
+        - ``valid_mask`` has shape ``(H, W)`` and marks pixels with finite depth
+          values greater than zero.
+
+    Notes:
+        The internal pixel meshgrid is cached per image shape to reduce
+        allocations in high-rate pipelines.
     """
     if depth.ndim != 2:
         raise ValueError(f"depth must be 2D (H, W), got shape {depth.shape}")
@@ -57,7 +68,7 @@ def depth_to_points(depth: np.ndarray, intrinsics: np.ndarray):
 
     if not np.any(valid):
         LOGGER.warning("No valid depth values found; returning empty point cloud")
-        return np.empty((0, 3), dtype=float), valid
+        return np.empty((0, 3), dtype=float), valid.reshape(depth.shape)
 
     u = u_coord.reshape(-1)[valid]
     v = v_coord.reshape(-1)[valid]

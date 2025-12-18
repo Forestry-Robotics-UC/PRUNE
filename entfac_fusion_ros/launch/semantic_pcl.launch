@@ -8,6 +8,7 @@
   <arg name="confidence_topic" default=""/>
   <arg name="depth_input_in_topic" default=""/>
   <arg name="depth_input_topic" default="/camera/depth/image_rect_raw"/>
+  <arg name="output_topic" default="semantic_pointcloud"/>
 
   <rosparam command="load"
             file="$(find entfac_fusion_ros)/config/semantic_pcl.yaml"
@@ -26,5 +27,7 @@
   </group>
 
   <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node" output="screen"
-        args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')" />
+        args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')">
+    <remap from="semantic_pointcloud" to="$(arg output_topic)"/>
+  </node>
 </launch>

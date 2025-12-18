@@ -9,6 +9,7 @@
   <arg name="bag_localization" default="$(arg bags_path)/localization_15Hz.bag"/>
   <arg name="bag_segmentation"
        default="$(arg bags_path)/segmentation_segnext_over_canopy_w_pcl.bag"/>
+  <arg name="output_topic" default="semantic_pointcloud"/>
 
   <group if="$(arg play_bags)">
     <param name="use_sim_time" value="true"/>
@@ -43,6 +44,8 @@
 
   <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node"
         output="screen"
-        args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')" />
+        args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')">
+    <remap from="semantic_pointcloud" to="$(arg output_topic)"/>
+  </node>
 
 </launch>

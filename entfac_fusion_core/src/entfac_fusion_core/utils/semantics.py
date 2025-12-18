@@ -163,9 +163,11 @@ def _cluster_packed_colors(
             centers_packed.append(int(packed))
             centers_counts.append(int(cnt))
             continue
-        centers_arr = np.asarray(centers_rgb, dtype=np.int16)
-        diff = centers_arr - rgb.reshape(1, 3)
-        dist2 = np.sum(diff * diff, axis=1)
+        # Use int32 to avoid int16 overflow when squaring large channel diffs.
+        centers_arr = np.asarray(centers_rgb, dtype=np.int32)
+        rgb_i = rgb.astype(np.int32, copy=False).reshape(1, 3)
+        diff = centers_arr - rgb_i
+        dist2 = np.sum(diff * diff, axis=1, dtype=np.int64)
         nearest = int(np.argmin(dist2))
         if int(dist2[nearest]) <= dist2_max:
             centers_counts[nearest] += int(cnt)
@@ -358,6 +360,7 @@ def count_semantic_groups(
     color_min_fraction: float = 0.0,
     color_max_colors: Optional[int] = None,
     color_merge_distance: int = 0,
+    color_auto_denoise: bool = True,
 ) -> Tuple[str, int]:
     """Count semantic groups for either label or palette arrays.
 
@@ -383,6 +386,43 @@ def count_semantic_groups(
             merge_distance=color_merge_distance,
         )
         count = int(palette.size)
+
+        # Heuristic: palette semantic images transported via lossy compression
+        # (e.g., JPEG) can produce hundreds/thousands of unique colors that are
+        # not true classes. If the caller uses the "exact" defaults and the
+        # palette is suspiciously large, re-run with conservative denoising.
+        defaults_used = (
+            int(color_quantize_step) == 1
+            and int(color_sample_stride) == 1
+            and int(color_min_count) == 1
+            and float(color_min_fraction) == 0.0
+            and color_max_colors is None
+            and int(color_merge_distance) == 0
+        )
+        if bool(color_auto_denoise) and defaults_used and count > 64:
+            denoise_palette = dominant_color_triplets(
+                semantic[:, :, :3],
+                quantize_step=8,
+                sample_stride=2,
+                min_count=1,
+                # Filter low-frequency colors to suppress JPEG artifacts while
+                # keeping small-but-real semantic regions.
+                min_fraction=1e-4,
+                max_colors=64,
+                merge_distance=24,
+            )
+            denoise_count = int(denoise_palette.size)
+            LOGGER.debug(
+                "count_semantic_groups: noisy palette detected (raw=%d); denoised=%d (quantize_step=%d sample_stride=%d min_fraction=%.6f merge_distance=%d max_colors=%d)",
+                int(count),
+                int(denoise_count),
+                8,
+                2,
+                1e-4,
+                24,
+                64,
+            )
+            count = denoise_count
         LOGGER.debug(
             "count_semantic_groups: colors=%d (quantize_step=%d sample_stride=%d)",
             int(count),

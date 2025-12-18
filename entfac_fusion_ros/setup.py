@@ -21,15 +21,14 @@
 # Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
-#   setuptools entrypoint for installing the ROS-agnostic fusion core as a
-#   catkin Python package.
+#   setuptools entry for installing entfac_fusion_ros Python modules via catkin.
 
 from setuptools import find_packages, setup
 
 
 setup(
-    name="entfac_fusion_core",
+    name="entfac_fusion_ros",
     version="1.0.0",
     package_dir={"": "src"},
-    packages=find_packages("src"),
+    packages=find_packages(where="src"),
 )

@@ -79,3 +79,22 @@ def test_lidar_fusion_projects_and_samples():
 
     assert pcl.points_xyz.shape[0] == 1
     assert pcl.labels[0] == 5
+
+
+def test_lidar_fusion_uses_truncation_to_avoid_border_rounding():
+    # Regression test: rounding can produce v==h or u==w for points near the
+    # border (e.g. v=1.9 with h=2 -> round(v)=2), which would be out-of-bounds.
+    labels = np.array([[5, 6], [7, 8]], dtype=np.int32)
+    intrinsics = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+    pcl = fuse_lidar_semantics(
+        SemanticObservation(labels=labels),
+        PointObservation(points_xyz=np.array([[0.0, 1.9, 1.0]])),
+        intrinsics,
+        np.eye(4),
+        np.eye(4),
+    )
+
+    assert pcl.points_xyz.shape[0] == 1
+    # v=1.9 should sample row 1 (floor), not crash by rounding to row 2.
+    assert pcl.labels[0] == 7

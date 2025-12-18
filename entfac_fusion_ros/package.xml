@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="2">
   <name>entfac_fusion_ros</name>
-  <version>0.1.0</version>
+  <version>1.0.0</version>
   <description>ROS wrappers for ENTFAC Sensor Fusion semantic point cloud generation.</description>
 
   <maintainer email="duda.andrada@isr.uc.pt">Duda Andrada</maintainer>
@@ -15,6 +15,7 @@
   <build_depend>message_filters</build_depend>
   <build_depend>image_transport</build_depend>
   <build_depend>std_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
   <build_depend>entfac_fusion_core</build_depend>
 
   <exec_depend>rospy</exec_depend>
@@ -25,8 +26,10 @@
   <exec_depend>compressed_image_transport</exec_depend>
   <exec_depend>compressed_depth_image_transport</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>rosbag</exec_depend>
+  <exec_depend>python3-rospkg</exec_depend>
   <exec_depend>python3-scipy</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>entfac_fusion_core</exec_depend>

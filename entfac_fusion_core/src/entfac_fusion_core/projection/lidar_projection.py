@@ -45,8 +45,21 @@ def project_points_to_image(
 ):
     """Project lidar points into camera pixel coordinates.
 
-    Returns (uv, mask) where uv has shape (N, 2) and mask marks points
-    that fall inside the image bounds.
+    Args:
+        lidar_points: 3D points with shape ``(N, 3)`` in the LiDAR frame.
+        camera_intrinsics: Camera intrinsics matrix ``K`` with shape ``(3, 3)``.
+        camera_T_lidar: Homogeneous transform with shape ``(4, 4)`` mapping LiDAR
+            points into the camera frame.
+        image_size: Tuple ``(width, height)`` in pixels.
+
+    Returns:
+        Tuple ``(uv, inside_mask)``:
+        - ``uv`` has shape ``(N, 2)`` in pixel coordinates ``(u, v)``.
+        - ``inside_mask`` has shape ``(N,)`` and is true for points that are in
+          front of the camera and project inside the image bounds.
+
+    Raises:
+        ValueError: If shapes/dtypes are invalid.
     """
     camera_intrinsics = ensure_float_matrix(
         np.asarray(camera_intrinsics), (3, 3)
@@ -69,7 +82,11 @@ def project_points_to_image(
         points_cam[in_front, 1] * camera_intrinsics[1, 1] / z[in_front]
     ) + camera_intrinsics[1, 2]
 
-    w, h = image_size
+    if not isinstance(image_size, (tuple, list)) or len(image_size) != 2:
+        raise ValueError("image_size must be (width, height)")
+    w, h = int(image_size[0]), int(image_size[1])
+    if w <= 0 or h <= 0:
+        raise ValueError("image_size must be positive")
     inside = (
         (uv[:, 0] >= 0)
         & (uv[:, 0] < w)

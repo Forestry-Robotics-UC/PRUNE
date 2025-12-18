@@ -52,7 +52,30 @@ def fuse_depth_semantics(
     target_T_depth: np.ndarray,
     include_unlabeled: bool = False,
 ) -> SemanticPointCloud:
-    """Fuse aligned semantic + depth into a semantic point cloud in target frame."""
+    """Fuse aligned semantic + depth into a semantic point cloud in the target frame.
+
+    This function is stateless and processes a single frame. It does not perform
+    any temporal fusion or mapping updates.
+
+    Args:
+        semantic: Semantic labels (and optional confidence) with shape ``(H, W)``.
+        depth: Depth image aligned with ``semantic.labels`` and shape ``(H, W)``.
+            Depth values are expected in meters.
+        intrinsics: Camera intrinsics matrix ``K`` with shape ``(3, 3)``.
+        target_T_depth: Homogeneous transform with shape ``(4, 4)`` mapping points
+            from the depth frame into the desired target/output frame.
+        include_unlabeled: If true, keep points whose semantic label is negative
+            (e.g. ``-1``). If false, drop them.
+
+    Returns:
+        SemanticPointCloud in the target frame:
+        - ``points_xyz`` has shape ``(N, 3)`` in target coordinates (meters)
+        - ``labels`` has shape ``(N,)`` and dtype ``int64``
+        - ``confidence`` has shape ``(N,)`` (float32) if provided, else ``None``
+
+    Raises:
+        ValueError: If inputs have invalid shapes/dtypes or transforms are invalid.
+    """
     LOGGER.debug(
         "fuse_depth_semantics: labels=%s depth=%s include_unlabeled=%s",
         semantic.labels.shape,
@@ -95,6 +118,9 @@ def fuse_depth_semantics(
             points_cam.shape[0],
         )
 
+    if conf is not None:
+        conf = np.asarray(conf, dtype=np.float32)
+
     points_target = transform_points(target_T_depth, points_cam)
     pcl = SemanticPointCloud(points_target, labels.astype(np.int64), conf)
     pcl.validate()
@@ -109,7 +135,33 @@ def fuse_lidar_semantics(
     target_T_lidar: np.ndarray,
     include_unlabeled: bool = False,
 ) -> SemanticPointCloud:
-    """Project LiDAR into image, sample semantics, and emit semantic point cloud."""
+    """Project LiDAR into an image, sample semantics, and emit a semantic point cloud.
+
+    This function is stateless and processes a single frame. It does not perform
+    any temporal fusion or mapping updates.
+
+    Args:
+        semantic: Semantic labels (and optional confidence) with shape ``(H, W)``.
+        lidar_points: LiDAR points with shape ``(N, 3)`` in the LiDAR frame.
+        intrinsics: Camera intrinsics matrix ``K`` with shape ``(3, 3)``.
+        camera_T_lidar: Homogeneous transform with shape ``(4, 4)`` mapping LiDAR
+            points into the camera frame.
+        target_T_lidar: Homogeneous transform with shape ``(4, 4)`` mapping LiDAR
+            points into the desired target/output frame.
+        include_unlabeled: If true, also output points that project outside the
+            image bounds with label ``-1`` and confidence ``0`` (if confidence is
+            enabled). If false, drop them.
+
+    Returns:
+        SemanticPointCloud in the target frame:
+        - ``points_xyz`` has shape ``(M, 3)`` in target coordinates (meters)
+        - ``labels`` has shape ``(M,)`` and dtype ``int64``
+        - ``confidence`` has shape ``(M,)`` (float32) if provided, else ``None``
+
+    Raises:
+        ValueError: If inputs have invalid shapes/dtypes or transforms are invalid.
+        RuntimeError: If internal projection bookkeeping becomes inconsistent.
+    """
     LOGGER.debug(
         "fuse_lidar_semantics: labels=%s points=%s include_unlabeled=%s",
         semantic.labels.shape,
@@ -161,7 +213,7 @@ def fuse_lidar_semantics(
     labels = semantic.labels[v, u]
 
     if semantic.confidence is not None:
-        confidences = semantic.confidence[v, u]
+        confidences = semantic.confidence[v, u].astype(np.float32, copy=False)
     else:
         confidences = None
 
@@ -196,7 +248,7 @@ def fuse_lidar_semantics(
 
     pcl = SemanticPointCloud(points_all, labels_all, conf_all)
     pcl.validate()
-    LOGGER.info(
+    LOGGER.debug(
         "LiDAR fusion produced %d labeled points (%d unlabeled kept=%s)",
         labels.shape[0],
         points_all.shape[0] - labels.shape[0],

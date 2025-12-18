@@ -17,3 +17,6 @@ build/
 devel/
 install/
 .catkin_tools/
+
+# Output folder
+output/

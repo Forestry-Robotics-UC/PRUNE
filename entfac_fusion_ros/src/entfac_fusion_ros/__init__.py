@@ -21,15 +21,9 @@
 # Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
-#   setuptools entrypoint for installing the ROS-agnostic fusion core as a
-#   catkin Python package.
+#   ROS1 Noetic Python package providing helpers and nodes for ENTFAC Sensor Fusion.
 
-from setuptools import find_packages, setup
+"""ROS1 Noetic helpers and nodes for ENTFAC Sensor Fusion."""
 
+__all__ = []
 
-setup(
-    name="entfac_fusion_core",
-    version="1.0.0",
-    package_dir={"": "src"},
-    packages=find_packages("src"),
-)

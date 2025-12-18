@@ -9,6 +9,8 @@ find_package(catkin REQUIRED COMPONENTS
   entfac_fusion_core
 )
 
+catkin_python_setup()
+
 catkin_package(
   CATKIN_DEPENDS
     rospy
@@ -20,10 +22,15 @@ catkin_package(
 
 catkin_install_python(
   PROGRAMS
-    nodes/semantic_pcl_node.py
+    scripts/semantic_pcl_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 install(DIRECTORY launch config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
+
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest(test/test_semantic_pcl_node.test)
+endif()
