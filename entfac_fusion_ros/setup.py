@@ -29,6 +29,6 @@ from setuptools import find_packages, setup
 setup(
     name="entfac_fusion_ros",
     version="1.0.0",
-    package_dir={"": "src"},
-    packages=find_packages(where="src"),
+    package_dir={"": "."},
+    packages=find_packages(),
 )

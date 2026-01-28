@@ -31,7 +31,21 @@ import numpy as np
 
 
 def image_to_numpy(msg):
-    """Convert sensor_msgs/Image to numpy without copies (when possible)."""
+    """Convert ``sensor_msgs/Image`` to a NumPy array without copies when possible.
+
+    Args:
+        msg: ROS Image message. Supported encodings include ``mono8``,
+            ``mono16``, ``16UC1``, ``32FC1``, ``rgb8``, ``bgr8``, ``rgba8``,
+            and ``bgra8``.
+
+    Returns:
+        NumPy array with shape ``(H, W)`` for single-channel images or
+        ``(H, W, C)`` for 3/4-channel images. The dtype matches the encoding.
+
+    Raises:
+        ValueError: If the encoding is unsupported or the row step does not
+            match the expected packed layout.
+    """
     if msg is None:
         return None
     encoding = msg.encoding.lower()
@@ -67,7 +81,17 @@ def image_to_numpy(msg):
 
 
 def pointcloud2_to_xyz(msg):
-    """Extract xyz float32 points from sensor_msgs/PointCloud2."""
+    """Extract XYZ points from ``sensor_msgs/PointCloud2`` into a float32 array.
+
+    Args:
+        msg: ROS PointCloud2 message containing ``x``, ``y``, and ``z`` fields.
+
+    Returns:
+        ``(N, 3)`` array of XYZ points in the message frame (float32).
+
+    Raises:
+        ValueError: If the message is big-endian or missing XYZ fields.
+    """
     if msg.is_bigendian:
         raise ValueError("big-endian PointCloud2 not supported in fast path")
     field_offsets = {f.name: f.offset for f in msg.fields}
@@ -105,7 +129,17 @@ def _quantize_u8(arr_u8: np.ndarray, step: int) -> np.ndarray:
 
 
 def rgb_to_packed_u32(data: np.ndarray, encoding: str, *, quantize_step: int = 1):
-    """Pack rgb/bgr/rgba/bgra image into uint32 (r<<16|g<<8|b)."""
+    """Pack RGB/BGR/RGBA/BGRA image into uint32 (``r<<16|g<<8|b``).
+
+    Args:
+        data: Image array with shape ``(H, W, 3)`` or ``(H, W, 4)``.
+        encoding: One of ``rgb8``, ``bgr8``, ``rgba8``, or ``bgra8``.
+        quantize_step: Optional quantization step for 8-bit channels to reduce
+            noise (use ``8`` or ``16`` for JPEG artifacts; ``1`` disables).
+
+    Returns:
+        ``(H, W)`` array of packed RGB values as ``uint32``.
+    """
     encoding = str(encoding).lower()
     if encoding == "bgr8":
         b, g, r = data[:, :, 0], data[:, :, 1], data[:, :, 2]
@@ -122,4 +156,3 @@ def rgb_to_packed_u32(data: np.ndarray, encoding: str, *, quantize_step: int = 1
     g_u32 = _quantize_u8(g, step)
     b_u32 = _quantize_u8(b, step)
     return (r_u32 << 16) | (g_u32 << 8) | b_u32
-

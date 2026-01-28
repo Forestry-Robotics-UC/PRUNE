@@ -31,9 +31,9 @@ from pathlib import Path
 
 def _ensure_pkg_on_path() -> None:
     this = Path(__file__).resolve()
-    pkg_src = this.parents[1] / "src"
-    if pkg_src.is_dir() and str(pkg_src) not in sys.path:
-        sys.path.insert(0, str(pkg_src))
+    pkg_root = this.parents[1]
+    if pkg_root.is_dir() and str(pkg_root) not in sys.path:
+        sys.path.insert(0, str(pkg_root))
 
 
 _ensure_pkg_on_path()
@@ -43,4 +43,3 @@ from entfac_fusion_ros.semantic_pcl_node import main  # noqa: E402
 
 if __name__ == "__main__":
     main()
-

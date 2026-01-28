@@ -20,3 +20,5 @@ install/
 
 # Output folder
 output/
+
+.vscode

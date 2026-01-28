@@ -68,7 +68,8 @@ pcl = fuse_depth_semantics(
   - `~camera_info`: CameraInfo for intrinsics + frame id.
   - `~depth_input_topic`: geometry input topic; set to either a depth `sensor_msgs/Image` or a `sensor_msgs/PointCloud2` (LiDAR). The node auto-detects which and selects the fusion mode.
   - Deprecated: `~depth_topic` and `~lidar_topic` (still supported for backwards-compat).
-  - Mode auto-detected from `~depth_input_topic` (depth if Image, lidar if PointCloud2). You can still set `~mode` to force.
+  - `~mode`: force fusion mode (`depth` or `lidar`); empty enables auto-detect.
+  - Mode auto-detected from `~depth_input_topic` when `~mode` is empty (depth if Image, lidar if PointCloud2).
   - `~core_debug`: enable DEBUG logs from `entfac_fusion_core` (can be noisy).
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
@@ -76,9 +77,15 @@ pcl = fuse_depth_semantics(
   - `~colorize_labels`: publish PointCloud2 `rgb` (labels: uses `~color_map` if provided, otherwise a deterministic random palette; rgb: uses semantic image colors).
   - `~random_color_seed`, `~num_labels`: control the deterministic random palette (labels mode only).
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
+  - `~sync_slop_sec`, `~sync_queue_size`: ApproximateTimeSynchronizer slop/queue for semantic-depth or semantic-lidar pairing.
+  - `~cloud_stamp_source`: select output PointCloud2 stamp (`auto`, `semantic`, `depth`, `lidar`, `latest`, `earliest`, `midpoint`).
+  - `~cloud_time_offset_sec`: signed seconds offset applied to the output stamp (negative shifts earlier).
   - `~enable_profiling`: cProfile summary per callback (off by default).
   - `~status_period`: print a periodic ASCII status table (publish rate, point counts).
   - `~ply_output_dir`: directory for PLY dumps (used by services below).
+  - `~ply_target_frame`: optional TF frame for PLY output (empty uses `target_frame`).
+  - `~ply_tf_use_latest`: fall back to latest TF for PLY export if exact-time lookup fails.
+  - `~ply_tf_tolerance_sec`: max allowed time difference when using latest TF for PLY export.
   - Services:
     - `~save_ply` (`std_srvs/Trigger`): save the last published cloud to a PLY file.
     - `~set_ply_recording` (`std_srvs/SetBool`): enable/disable continuous PLY recording.
