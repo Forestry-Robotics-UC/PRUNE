@@ -23,7 +23,7 @@
 # Description:
 #   ROS node entrypoint (kept minimal for roslaunch); implementation lives in entfac_fusion_ros Python package.
 
-"""ROS node entrypoint for semantic_pcl_node."""
+"""ROS node entrypoint for colored_pcl_node."""
 
 import sys
 from pathlib import Path
@@ -38,7 +38,7 @@ def _ensure_pkg_on_path() -> None:
 
 _ensure_pkg_on_path()
 
-from entfac_fusion_ros.semantic_pcl_node import main  # noqa: E402
+from entfac_fusion_ros.colored_pcl_node import main  # noqa: E402
 
 
 if __name__ == "__main__":

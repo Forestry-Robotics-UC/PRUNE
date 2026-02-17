@@ -105,8 +105,8 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import rospy
 import tf2_ros
-from message_filters import ApproximateTimeSynchronizer, Subscriber
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from message_filters import ApproximateTimeSynchronizer, Cache, Subscriber
+from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
 from std_srvs.srv import SetBool, SetBoolResponse, Trigger, TriggerResponse
 
 # Ensure core package is importable when running from a monorepo source tree.
@@ -120,7 +120,7 @@ for parent in _THIS.parents:
 
 from entfac_fusion_core.projection.depth import depth_to_points
 from entfac_fusion_core.projection.lidar_projection import project_points_to_image
-from entfac_fusion_core.semantic_pcl import (
+from entfac_fusion_core.colored_pcl import (
     fuse_depth_semantics,
     fuse_lidar_semantics,
 )
@@ -131,6 +131,7 @@ from entfac_fusion_core.types import (
     SemanticObservation,
     SemanticPointCloud,
 )
+from entfac_fusion_core.utils.semantics import packed_rgb_to_triplets
 from entfac_fusion_core.utils.validation import (
     flatten_masked,
     require_homogeneous_transform,
@@ -139,6 +140,7 @@ from entfac_fusion_core.utils.validation import (
 from entfac_fusion_ros.conversions import (
     image_to_numpy,
     pointcloud2_to_xyz,
+    pointcloud2_to_xyz_t,
     rgb_to_packed_u32,
 )
 from entfac_fusion_ros.logging_ros import NodeLogger, configure_core_logging
@@ -191,7 +193,7 @@ class _LastPcl:
     rgb_packed_float: Optional[np.ndarray]
 
 
-class SemanticPclNode:
+class ColoredPclNode:
     """ROS node bridging topics to the numpy fusion core."""
 
     def __init__(self):
@@ -254,6 +256,152 @@ class SemanticPclNode:
                 f"{self.semantic_input_type!r}"
             )
         self._param_meta["~semantic_input_type"]["value"] = self.semantic_input_type
+        self.undistort_semantic = self._get_param_bool(
+            "~undistort_semantic",
+            False,
+            "If true, undistort semantic images using CameraInfo distortion before projection (lidar mode only).",
+        )
+        self.undistort_alpha = self._get_param_float(
+            "~undistort_alpha",
+            0.0,
+            "Undistort balance/alpha in [0,1]; 0=crop to valid pixels, 1=keep all pixels.",
+        )
+        if not (0.0 <= self.undistort_alpha <= 1.0):
+            raise ValueError("~undistort_alpha must be in [0, 1]")
+        self.rolling_shutter_enable = self._get_param_bool(
+            "~rolling_shutter_enable",
+            False,
+            "Apply rotation-only rolling shutter correction using IMU.",
+        )
+        self.rolling_shutter_readout_sec = self._get_param_float(
+            "~rolling_shutter_readout_sec",
+            0.0,
+            "Rolling shutter total readout time in seconds (0 disables).",
+        )
+        if self.rolling_shutter_readout_sec < 0.0:
+            raise ValueError("~rolling_shutter_readout_sec must be >= 0")
+        self.rolling_shutter_direction = self._get_param_str(
+            "~rolling_shutter_direction",
+            "top_to_bottom",
+            "Rolling shutter readout direction: top_to_bottom or bottom_to_top.",
+        ).strip().lower()
+        if self.rolling_shutter_direction not in ("top_to_bottom", "bottom_to_top"):
+            raise ValueError(
+                "~rolling_shutter_direction must be top_to_bottom or bottom_to_top"
+            )
+        self.imu_topic = self._get_param_str(
+            "~imu_topic",
+            "",
+            "IMU topic used for rolling shutter correction (sensor_msgs/Imu).",
+            allow_empty=True,
+        )
+        self.imu_frame = self._get_param_str(
+            "~imu_frame",
+            "",
+            "Optional IMU frame override for rolling shutter correction.",
+            allow_empty=True,
+        )
+        self.imu_cache_size = self._get_param_int(
+            "~imu_cache_size",
+            2000,
+            "IMU cache size for rolling shutter correction.",
+        )
+        if self.imu_cache_size < 10:
+            raise ValueError("~imu_cache_size must be >= 10")
+        self.imu_cache_max_dt_sec = self._get_param_float(
+            "~imu_cache_max_dt_sec",
+            0.02,
+            "Max allowed dt (seconds) between semantic frame and IMU for correction.",
+        )
+        if self.imu_cache_max_dt_sec < 0.0:
+            raise ValueError("~imu_cache_max_dt_sec must be >= 0")
+        self.camera_metadata_topic = self._get_param_str(
+            "~camera_metadata_topic",
+            "",
+            "Camera metadata topic for rolling shutter readout (realsense2_camera_msgs/Metadata).",
+            allow_empty=True,
+        )
+        self.metadata_readout_key = self._get_param_int(
+            "~metadata_readout_key",
+            -1,
+            "Metadata key for readout time; set -1 to disable metadata readout.",
+        )
+        self.metadata_readout_scale = self._get_param_float(
+            "~metadata_readout_scale",
+            1e-6,
+            "Scale applied to metadata value to convert to seconds (e.g., use 1e-6 for usec).",
+        )
+        if self.metadata_readout_scale <= 0.0:
+            raise ValueError("~metadata_readout_scale must be > 0")
+        self.metadata_max_dt_sec = self._get_param_float(
+            "~metadata_max_dt_sec",
+            0.1,
+            "Max allowed dt (seconds) between metadata and semantic frame for readout.",
+        )
+        if self.metadata_max_dt_sec < 0.0:
+            raise ValueError("~metadata_max_dt_sec must be >= 0")
+        self.lidar_deskew_enable = self._get_param_bool(
+            "~lidar_deskew_enable",
+            False,
+            "Enable LiDAR deskew using per-point time + IMU.",
+        )
+        self.lidar_deskew_mode = self._get_param_str(
+            "~lidar_deskew_mode",
+            "rotation",
+            "Deskew mode: rotation, translation, or both.",
+        ).strip().lower()
+        if self.lidar_deskew_mode not in ("rotation", "translation", "both"):
+            raise ValueError("~lidar_deskew_mode must be rotation, translation, or both")
+        self.lidar_time_field = self._get_param_str(
+            "~lidar_time_field",
+            "t",
+            "PointCloud2 field name for per-point time (default: t).",
+        ).strip()
+        self.lidar_time_scale = self._get_param_float(
+            "~lidar_time_scale",
+            1e-9,
+            "Scale factor to convert per-point time to seconds (e.g., ns -> 1e-9).",
+        )
+        if self.lidar_time_scale <= 0.0:
+            raise ValueError("~lidar_time_scale must be > 0")
+        self.lidar_deskew_ref = self._get_param_str(
+            "~lidar_deskew_ref",
+            "start",
+            "Deskew reference time: start or mid (scan start recommended).",
+        ).strip().lower()
+        if self.lidar_deskew_ref not in ("start", "mid"):
+            raise ValueError("~lidar_deskew_ref must be start or mid")
+        self.lidar_imu_topic = self._get_param_str(
+            "~lidar_imu_topic",
+            "",
+            "IMU topic used for LiDAR deskew (sensor_msgs/Imu).",
+            allow_empty=True,
+        )
+        self.lidar_imu_frame = self._get_param_str(
+            "~lidar_imu_frame",
+            "",
+            "Optional IMU frame override for LiDAR deskew.",
+            allow_empty=True,
+        )
+        self.lidar_imu_cache_size = self._get_param_int(
+            "~lidar_imu_cache_size",
+            2000,
+            "IMU cache size for LiDAR deskew.",
+        )
+        if self.lidar_imu_cache_size < 10:
+            raise ValueError("~lidar_imu_cache_size must be >= 10")
+        self.lidar_imu_cache_max_dt_sec = self._get_param_float(
+            "~lidar_imu_cache_max_dt_sec",
+            0.02,
+            "Max allowed dt (seconds) between LiDAR scan time and IMU for deskew.",
+        )
+        if self.lidar_imu_cache_max_dt_sec < 0.0:
+            raise ValueError("~lidar_imu_cache_max_dt_sec must be >= 0")
+        self.lidar_imu_accel_is_gravity_compensated = self._get_param_bool(
+            "~lidar_imu_accel_gravity_compensated",
+            True,
+            "If true, IMU linear_acceleration is gravity-compensated (recommended).",
+        )
 
         self.conf_topic = self._get_param_str(
             "~confidence_topic",
@@ -324,6 +472,13 @@ class SemanticPclNode:
         )
         if self.sync_slop_sec < 0.0:
             raise ValueError("~sync_slop_sec must be >= 0")
+        self.pair_max_dt_sec = self._get_param_float(
+            "~pair_max_dt_sec",
+            0.03,
+            "Hard max allowed |Δt| (seconds) between semantic and geometry; <=0 disables.",
+        )
+        if self.pair_max_dt_sec < 0.0:
+            raise ValueError("~pair_max_dt_sec must be >= 0")
         self.sync_queue_size = self._get_param_int(
             "~sync_queue_size",
             5,
@@ -367,6 +522,17 @@ class SemanticPclNode:
             True,
             "If true, treat common uint16 depth sentinels (0, 65535) as invalid before scaling.",
         )
+        self.debug_project_lidar = self._get_param_bool(
+            "~debug_project_lidar",
+            False,
+            "If true (lidar mode), publish a debug image with projected lidar points overlaid.",
+        )
+        # Fixed debug projection settings to avoid extra parameters.
+        self.debug_projected_topic = "/debug/lidar_projection"
+        self.debug_projected_colorize = "depth"
+        self.debug_projected_depth_min = 0.0
+        self.debug_projected_depth_max = 0.0
+        self.debug_projected_stride = 5
 
         self.static_target_T_depth = self._get_matrix_param(
             "~static_target_T_depth",
@@ -430,9 +596,18 @@ class SemanticPclNode:
             cam_info.header.stamp.to_sec(),
         )
         self._log.debug("__init__", "Intrinsics K=\n%s", format_matrix(self.intrinsics))
+        self.intrinsics_raw = self.intrinsics.copy()
+        self._camera_distortion = np.asarray(cam_info.D, dtype=float) if cam_info.D else None
+        self._camera_distortion_model = (cam_info.distortion_model or "").strip().lower()
+        self._camera_info_size = (int(cam_info.height), int(cam_info.width))
 
         self._output_topic = rospy.resolve_name("semantic_pointcloud")
         self.pcl_pub = rospy.Publisher("semantic_pointcloud", PointCloud2, queue_size=1)
+        self._debug_proj_pub = None
+        if self.debug_project_lidar:
+            self._debug_proj_pub = rospy.Publisher(
+                self.debug_projected_topic, Image, queue_size=1
+            )
 
         self.target_T_depth = None
         self.camera_T_lidar = None
@@ -446,6 +621,21 @@ class SemanticPclNode:
             self.mode = self._detect_mode()
         self._resolve_cloud_stamp_source()
         self._prime_transforms()
+        self._undistort_map1 = None
+        self._undistort_map2 = None
+        self._undistort_active = False
+        self._cv2 = None
+        self._maybe_init_undistort()
+        self._imu_cache = None
+        self._imu_sub = None
+        self._imu_to_camera_R = None
+        self._metadata_latest = {}
+        self._metadata_sub = None
+        self._lidar_imu_cache = None
+        self._lidar_imu_sub = None
+        self._lidar_imu_to_lidar_R = None
+        self._lidar_deskew_log_at = 0.0
+        self._lidar_deskew_warn_at = 0.0
 
         self._rgb_lut = None
         self._rgb_lut_num_labels = None
@@ -623,7 +813,7 @@ class SemanticPclNode:
     # ----------------------------
 
     def _log_param_report(self):
-        self._log.info("_log_param_report", "semantic_pcl_node debug report:")
+        self._log.info("_log_param_report", "colored_pcl_node debug report:")
         self._log.info(
             "_log_param_report",
             "  source=cli means passed as _param:=...; source=param_server means set via YAML/launch; source=default means unset.",
@@ -686,8 +876,52 @@ class SemanticPclNode:
     # ----------------------------
 
     def _register_subscribers(self):
-        semantic_sub = Subscriber(self.semantic_topic, Image)
-        conf_sub = Subscriber(self.conf_topic, Image) if self.conf_topic else None
+        semantic_sub = Subscriber(self.semantic_topic, Image, queue_size=self.sync_queue_size)
+        conf_sub = (
+            Subscriber(self.conf_topic, Image, queue_size=self.sync_queue_size)
+            if self.conf_topic
+            else None
+        )
+        if self.rolling_shutter_enable:
+            if not self.imu_topic:
+                self._log.warn(
+                    "_register_subscribers",
+                    "rolling_shutter_enable is true but ~imu_topic is empty; disabling rolling shutter.",
+                )
+                self.rolling_shutter_enable = False
+            else:
+                self._imu_sub = Subscriber(self.imu_topic, Imu, queue_size=2000)
+                self._imu_cache = Cache(self._imu_sub, self.imu_cache_size)
+            if self.camera_metadata_topic and self.metadata_readout_key >= 0:
+                try:
+                    from realsense2_camera_msgs.msg import Metadata  # type: ignore
+                except Exception as exc:  # noqa: BLE001
+                    self._log.warn(
+                        "_register_subscribers",
+                        "Cannot import realsense2_camera_msgs/Metadata (%s); metadata readout disabled.",
+                        exc,
+                    )
+                else:
+                    self._metadata_sub = rospy.Subscriber(
+                        self.camera_metadata_topic,
+                        Metadata,
+                        self._metadata_callback,
+                        queue_size=2000,
+                    )
+        if self.lidar_deskew_enable:
+            if not self.lidar_imu_topic:
+                self._log.warn(
+                    "_register_subscribers",
+                    "lidar_deskew_enable is true but ~lidar_imu_topic is empty; disabling deskew.",
+                )
+                self.lidar_deskew_enable = False
+            else:
+                self._lidar_imu_sub = Subscriber(
+                    self.lidar_imu_topic, Imu, queue_size=2000
+                )
+                self._lidar_imu_cache = Cache(
+                    self._lidar_imu_sub, self.lidar_imu_cache_size
+                )
         if self.mode == "depth":
             depth_sub = Subscriber(self.depth_input_topic, Image)
             subs = [semantic_sub, depth_sub]
@@ -718,6 +952,419 @@ class SemanticPclNode:
             self.depth_input_topic,
             self.conf_topic,
         )
+
+    def _get_live_param_float(self, name: str, fallback: float) -> float:
+        try:
+            return float(rospy.get_param(name, fallback))
+        except Exception:  # noqa: BLE001
+            return fallback
+
+    def _metadata_callback(self, msg) -> None:
+        try:
+            key = int(msg.key)
+            value = int(msg.value)
+        except Exception:  # noqa: BLE001
+            return
+        self._metadata_latest[key] = (msg.header.stamp, value)
+
+    def _get_readout_sec(self, stamp: rospy.Time) -> float:
+        if not self.rolling_shutter_enable:
+            return 0.0
+        if self.metadata_readout_key >= 0 and self._metadata_latest:
+            entry = self._metadata_latest.get(int(self.metadata_readout_key))
+            if entry is not None:
+                meta_stamp, value = entry
+                if self.metadata_max_dt_sec > 0.0:
+                    dt = abs((meta_stamp - stamp).to_sec())
+                    if dt > self.metadata_max_dt_sec:
+                        return float(self.rolling_shutter_readout_sec)
+                return float(value) * float(self.metadata_readout_scale)
+        return float(self.rolling_shutter_readout_sec)
+
+    def _lookup_imu_omega(self, stamp: rospy.Time) -> Optional[np.ndarray]:
+        if self._imu_cache is None:
+            return None
+        before = self._imu_cache.getElemBeforeTime(stamp)
+        after = self._imu_cache.getElemAfterTime(stamp)
+        if before is None and after is None:
+            return None
+        if before is None:
+            chosen = after
+        elif after is None:
+            chosen = before
+        else:
+            dt = (after.header.stamp - before.header.stamp).to_sec()
+            if dt > 0.0:
+                alpha = (stamp - before.header.stamp).to_sec() / dt
+                alpha = float(np.clip(alpha, 0.0, 1.0))
+                omega_b = np.array(
+                    [
+                        before.angular_velocity.x,
+                        before.angular_velocity.y,
+                        before.angular_velocity.z,
+                    ],
+                    dtype=float,
+                )
+                omega_a = np.array(
+                    [
+                        after.angular_velocity.x,
+                        after.angular_velocity.y,
+                        after.angular_velocity.z,
+                    ],
+                    dtype=float,
+                )
+                omega = (1.0 - alpha) * omega_b + alpha * omega_a
+                chosen = None
+            else:
+                chosen = before
+                omega = None
+        if chosen is not None:
+            omega = np.array(
+                [
+                    chosen.angular_velocity.x,
+                    chosen.angular_velocity.y,
+                    chosen.angular_velocity.z,
+                ],
+                dtype=float,
+            )
+        if self.imu_cache_max_dt_sec > 0.0:
+            dt = abs((stamp - (chosen.header.stamp if chosen is not None else before.header.stamp)).to_sec())
+            if dt > self.imu_cache_max_dt_sec:
+                return None
+
+        imu_frame = self.imu_frame or (chosen.header.frame_id if chosen is not None else before.header.frame_id)
+        if not imu_frame:
+            return None
+        if self._imu_to_camera_R is None:
+            mat = self._lookup_transform(self.camera_frame, imu_frame, rospy.Time(0))
+            if mat is None:
+                return None
+            self._imu_to_camera_R = mat[:3, :3]
+        omega_cam = self._imu_to_camera_R @ omega
+        return omega_cam
+
+    def _lookup_lidar_imu(self, stamp: rospy.Time) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        if self._lidar_imu_cache is None:
+            return None
+        before = self._lidar_imu_cache.getElemBeforeTime(stamp)
+        after = self._lidar_imu_cache.getElemAfterTime(stamp)
+        if before is None and after is None:
+            return None
+        if before is None:
+            chosen = after
+            omega = np.array(
+                [
+                    chosen.angular_velocity.x,
+                    chosen.angular_velocity.y,
+                    chosen.angular_velocity.z,
+                ],
+                dtype=float,
+            )
+            accel = np.array(
+                [
+                    chosen.linear_acceleration.x,
+                    chosen.linear_acceleration.y,
+                    chosen.linear_acceleration.z,
+                ],
+                dtype=float,
+            )
+        elif after is None:
+            chosen = before
+            omega = np.array(
+                [
+                    chosen.angular_velocity.x,
+                    chosen.angular_velocity.y,
+                    chosen.angular_velocity.z,
+                ],
+                dtype=float,
+            )
+            accel = np.array(
+                [
+                    chosen.linear_acceleration.x,
+                    chosen.linear_acceleration.y,
+                    chosen.linear_acceleration.z,
+                ],
+                dtype=float,
+            )
+        else:
+            dt = (after.header.stamp - before.header.stamp).to_sec()
+            if dt > 0.0:
+                alpha = (stamp - before.header.stamp).to_sec() / dt
+                alpha = float(np.clip(alpha, 0.0, 1.0))
+                omega_b = np.array(
+                    [
+                        before.angular_velocity.x,
+                        before.angular_velocity.y,
+                        before.angular_velocity.z,
+                    ],
+                    dtype=float,
+                )
+                omega_a = np.array(
+                    [
+                        after.angular_velocity.x,
+                        after.angular_velocity.y,
+                        after.angular_velocity.z,
+                    ],
+                    dtype=float,
+                )
+                accel_b = np.array(
+                    [
+                        before.linear_acceleration.x,
+                        before.linear_acceleration.y,
+                        before.linear_acceleration.z,
+                    ],
+                    dtype=float,
+                )
+                accel_a = np.array(
+                    [
+                        after.linear_acceleration.x,
+                        after.linear_acceleration.y,
+                        after.linear_acceleration.z,
+                    ],
+                    dtype=float,
+                )
+                omega = (1.0 - alpha) * omega_b + alpha * omega_a
+                accel = (1.0 - alpha) * accel_b + alpha * accel_a
+                chosen = before
+            else:
+                chosen = before
+                omega = np.array(
+                    [
+                        chosen.angular_velocity.x,
+                        chosen.angular_velocity.y,
+                        chosen.angular_velocity.z,
+                    ],
+                    dtype=float,
+                )
+                accel = np.array(
+                    [
+                        chosen.linear_acceleration.x,
+                        chosen.linear_acceleration.y,
+                        chosen.linear_acceleration.z,
+                    ],
+                    dtype=float,
+                )
+        if self.lidar_imu_cache_max_dt_sec > 0.0:
+            dt = abs((stamp - chosen.header.stamp).to_sec())
+            if dt > self.lidar_imu_cache_max_dt_sec:
+                return None
+        imu_frame = self.lidar_imu_frame or chosen.header.frame_id
+        if not imu_frame:
+            return None
+        if self._lidar_imu_to_lidar_R is None:
+            if not self._lidar_frame:
+                return None
+            mat = self._lookup_transform(self._lidar_frame, imu_frame, rospy.Time(0))
+            if mat is None:
+                return None
+            self._lidar_imu_to_lidar_R = mat[:3, :3]
+        omega_lidar = self._lidar_imu_to_lidar_R @ omega
+        accel_lidar = self._lidar_imu_to_lidar_R @ accel
+        return omega_lidar, accel_lidar
+
+    def _project_lidar_points(
+        self,
+        points: np.ndarray,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_size,
+        stamp: rospy.Time,
+    ):
+        if not self.rolling_shutter_enable:
+            return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
+        readout_sec = self._get_readout_sec(stamp)
+        if readout_sec <= 0.0:
+            return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
+        omega_cam = self._lookup_imu_omega(stamp)
+        if omega_cam is None:
+            return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
+
+        w, h = int(image_size[0]), int(image_size[1])
+        points_cam = transform_points(camera_T_lidar, points)
+        z = points_cam[:, 2]
+        in_front = z > 0
+        uv = np.zeros((points_cam.shape[0], 2), dtype=float)
+        uv[in_front, 0] = (points_cam[in_front, 0] * intrinsics[0, 0] / z[in_front]) + intrinsics[0, 2]
+        uv[in_front, 1] = (points_cam[in_front, 1] * intrinsics[1, 1] / z[in_front]) + intrinsics[1, 2]
+
+        if h <= 1:
+            return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
+        v = uv[:, 1]
+        if self.rolling_shutter_direction == "top_to_bottom":
+            row_frac = v / float(h - 1)
+        else:
+            row_frac = (float(h - 1) - v) / float(h - 1)
+        dt = (row_frac - 0.5) * float(readout_sec)
+        dt = np.where(np.isfinite(dt), dt, 0.0)
+        cross = np.cross(omega_cam.reshape(1, 3), points_cam)
+        points_cam = points_cam + dt.reshape(-1, 1) * cross
+        z = points_cam[:, 2]
+        in_front = z > 0
+        uv = np.zeros((points_cam.shape[0], 2), dtype=float)
+        uv[in_front, 0] = (points_cam[in_front, 0] * intrinsics[0, 0] / z[in_front]) + intrinsics[0, 2]
+        uv[in_front, 1] = (points_cam[in_front, 1] * intrinsics[1, 1] / z[in_front]) + intrinsics[1, 2]
+        inside = (
+            (uv[:, 0] >= 0)
+            & (uv[:, 0] < w)
+            & (uv[:, 1] >= 0)
+            & (uv[:, 1] < h)
+            & in_front
+        )
+        return uv, inside
+
+    def _deskew_lidar_points(
+        self,
+        points: np.ndarray,
+        t_raw: np.ndarray,
+        scan_stamp: rospy.Time,
+    ) -> np.ndarray:
+        if not self.lidar_deskew_enable:
+            return points
+        if t_raw is None or t_raw.size == 0:
+            return points
+        imu = self._lookup_lidar_imu(scan_stamp)
+        if imu is None:
+            now = time.time()
+            if now - self._lidar_deskew_warn_at > 2.0:
+                self._log.warn(
+                    "_deskew_lidar_points",
+                    "Deskew enabled but IMU lookup failed; skipping deskew.",
+                )
+                self._lidar_deskew_warn_at = now
+            return points
+        omega, accel = imu
+        dt = t_raw.astype(np.float64) * float(self.lidar_time_scale)
+        if self.lidar_deskew_ref == "mid":
+            dt = dt - 0.5 * float(np.nanmax(dt))
+        now = time.time()
+        if now - self._lidar_deskew_log_at > 2.0:
+            self._log.info(
+                "_deskew_lidar_points",
+                "Deskew active: mode=%s ref=%s dt_max=%.6f",
+                self.lidar_deskew_mode,
+                self.lidar_deskew_ref,
+                float(np.nanmax(dt)) if dt.size else 0.0,
+            )
+            self._lidar_deskew_log_at = now
+        if self.lidar_deskew_mode in ("rotation", "both"):
+            cross = np.cross(omega.reshape(1, 3), points)
+            points = points - dt.reshape(-1, 1) * cross
+        if self.lidar_deskew_mode in ("translation", "both"):
+            if not self.lidar_imu_accel_is_gravity_compensated:
+                self._log.warn(
+                    "_deskew_lidar_points",
+                    "Translation deskew assumes gravity-compensated IMU accel; set ~lidar_imu_accel_gravity_compensated=true if already corrected.",
+                )
+            disp = 0.5 * accel.reshape(1, 3) * (dt.reshape(-1, 1) ** 2)
+            points = points - disp
+        return points
+
+    def _maybe_init_undistort(self) -> None:
+        if not self.undistort_semantic:
+            return
+        if self.mode != "lidar":
+            self._log.warn(
+                "_maybe_init_undistort",
+                "undistort_semantic enabled but mode=%s; undistort is only applied in lidar mode.",
+                self.mode,
+            )
+            return
+        if self._camera_distortion is None or not self._camera_distortion.size:
+            self._log.warn(
+                "_maybe_init_undistort",
+                "CameraInfo has no distortion coefficients; skipping undistort.",
+            )
+            return
+        if np.allclose(self._camera_distortion, 0.0):
+            self._log.info(
+                "_maybe_init_undistort",
+                "CameraInfo distortion coefficients are zero; skipping undistort.",
+            )
+            return
+        try:
+            import cv2  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            self._log.warn(
+                "_maybe_init_undistort",
+                "OpenCV not available (%s); cannot undistort semantic images.",
+                exc,
+            )
+            return
+        h, w = self._camera_info_size
+        if h <= 0 or w <= 0:
+            self._log.warn(
+                "_maybe_init_undistort",
+                "CameraInfo image size invalid (%d x %d); skipping undistort.",
+                w,
+                h,
+            )
+            return
+        model = self._camera_distortion_model
+        k_mat = np.asarray(self.intrinsics_raw, dtype=float)
+        d_vec = np.asarray(self._camera_distortion, dtype=float).reshape(-1)
+
+        if model in ("plumb_bob", "rational_polynomial", ""):
+            new_k, _ = cv2.getOptimalNewCameraMatrix(
+                k_mat, d_vec, (w, h), float(self.undistort_alpha)
+            )
+            map1, map2 = cv2.initUndistortRectifyMap(
+                k_mat, d_vec, None, new_k, (w, h), cv2.CV_32FC1
+            )
+        elif model == "equidistant":
+            new_k = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                k_mat, d_vec, (w, h), np.eye(3), balance=float(self.undistort_alpha)
+            )
+            map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+                k_mat, d_vec, np.eye(3), new_k, (w, h), cv2.CV_32FC1
+            )
+        else:
+            self._log.warn(
+                "_maybe_init_undistort",
+                "Unsupported distortion_model=%s; skipping undistort.",
+                model,
+            )
+            return
+
+        self._cv2 = cv2
+        self._undistort_map1 = map1
+        self._undistort_map2 = map2
+        self._undistort_active = True
+        self.intrinsics = np.asarray(new_k, dtype=float)
+        self._log.info(
+            "_maybe_init_undistort",
+            "Undistort enabled (model=%s alpha=%.2f); intrinsics updated.",
+            model,
+            float(self.undistort_alpha),
+        )
+
+    def _undistort_array(self, data: np.ndarray, *, interpolation: str) -> np.ndarray:
+        if not self._undistort_active or self._cv2 is None:
+            return data
+        h, w = self._camera_info_size
+        if data.shape[0] != h or data.shape[1] != w:
+            self._log.warn(
+                "_undistort_array",
+                "Semantic image size %s does not match CameraInfo %dx%d; skipping undistort.",
+                data.shape,
+                w,
+                h,
+            )
+            return data
+        if interpolation == "nearest":
+            interp = self._cv2.INTER_NEAREST
+        else:
+            interp = self._cv2.INTER_LINEAR
+        orig_dtype = data.dtype
+        if data.dtype not in (np.uint8, np.uint16, np.float32):
+            work = data.astype(np.float32)
+        else:
+            work = data
+        remapped = self._cv2.remap(
+            work, self._undistort_map1, self._undistort_map2, interp
+        )
+        if remapped.dtype != orig_dtype:
+            remapped = remapped.astype(orig_dtype)
+        return remapped
 
     def _lookup_transform(self, target_frame, source_frame, stamp):
         try:
@@ -1089,6 +1736,8 @@ class SemanticPclNode:
 
     def _parse_semantic_labels(self, msg):
         data = image_to_numpy(msg)
+        if self._undistort_active:
+            data = self._undistort_array(data, interpolation="nearest")
         if data.ndim != 2:
             raise ValueError(
                 "semantic_input_type=labels requires a single-channel label image (e.g., mono8/16UC1/32SC1). "
@@ -1098,6 +1747,8 @@ class SemanticPclNode:
 
     def _parse_semantic_rgb_packed(self, msg):
         data = image_to_numpy(msg)
+        if self._undistort_active:
+            data = self._undistort_array(data, interpolation="linear")
         if data.ndim != 3:
             raise ValueError(
                 "semantic_input_type=rgb requires a 3/4-channel image (rgb8/bgr8/rgba8/bgra8). "
@@ -1109,6 +1760,47 @@ class SemanticPclNode:
             quantize_step=int(self.semantic_color_quantization_step),
         )
 
+    def _publish_lidar_projection_debug(
+        self, base_rgb, image_shape, uv, header, colors_u8=None
+    ):
+        if self._debug_proj_pub is None:
+            return
+        if image_shape is None or uv is None or uv.size == 0:
+            return
+        h, w = image_shape
+        if base_rgb is None:
+            base_rgb = np.zeros((h, w, 3), dtype=np.uint8)
+        img = np.ascontiguousarray(base_rgb.copy())
+        uv_int = np.round(uv).astype(np.int32, copy=False)
+        u = uv_int[:, 0]
+        v = uv_int[:, 1]
+        in_bounds = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        u = u[in_bounds]
+        v = v[in_bounds]
+        if colors_u8 is not None:
+            colors_u8 = np.asarray(colors_u8, dtype=np.uint8)
+            colors_u8 = colors_u8[in_bounds]
+        stride = int(self.debug_projected_stride)
+        if stride > 1 and u.size:
+            u = u[::stride]
+            v = v[::stride]
+            if colors_u8 is not None:
+                colors_u8 = colors_u8[::stride]
+        if u.size:
+            if colors_u8 is None:
+                img[v, u] = (255, 0, 0)
+            else:
+                img[v, u] = colors_u8
+        msg = Image()
+        msg.header = header
+        msg.height = h
+        msg.width = w
+        msg.encoding = "rgb8"
+        msg.is_bigendian = 0
+        msg.step = w * 3
+        msg.data = img.tobytes()
+        self._debug_proj_pub.publish(msg)
+
     def _infer_num_labels(self, labels_img: np.ndarray) -> int:
         labels_img = np.asarray(labels_img)
         flat = labels_img.reshape(-1)
@@ -1116,6 +1808,31 @@ class SemanticPclNode:
         if flat.size == 0:
             return 0
         return int(flat.max()) + 1
+
+    def _depth_to_debug_colors(self, depths: np.ndarray) -> Optional[np.ndarray]:
+        if depths is None or depths.size == 0:
+            return None
+        depths = np.asarray(depths, dtype=np.float32).reshape(-1)
+        valid = np.isfinite(depths) & (depths > 0)
+        if not np.any(valid):
+            return None
+        dmin = float(self.debug_projected_depth_min)
+        if dmin <= 0:
+            dmin = float(np.nanmin(depths[valid]))
+        dmax = float(self.debug_projected_depth_max)
+        if dmax <= 0:
+            if self.max_depth_m is not None and self.max_depth_m > dmin:
+                dmax = float(self.max_depth_m)
+            else:
+                dmax = float(np.nanpercentile(depths[valid], 95))
+        if dmax <= dmin:
+            dmax = dmin + 1e-3
+        t = (depths - dmin) / (dmax - dmin)
+        t = np.clip(t, 0.0, 1.0)
+        r = (t * 255.0).astype(np.uint8, copy=False)
+        g = np.zeros_like(r, dtype=np.uint8)
+        b = ((1.0 - t) * 255.0).astype(np.uint8, copy=False)
+        return np.stack((r, g, b), axis=-1)
 
     def _get_rgb_float_lut(self, labels_img: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
         if not self.colorize_labels:
@@ -1179,7 +1896,7 @@ class SemanticPclNode:
         else:
             t_ns = int(stamp.to_sec() * 1e9)
         self._ply_seq += 1
-        name = f"semantic_pcl_{t_ns}_{self._ply_seq:06d}.ply"
+        name = f"colored_pcl_{t_ns}_{self._ply_seq:06d}.ply"
         return Path(self.ply_output_dir) / name
 
     def _enqueue_ply(self, last: _LastPcl) -> bool:
@@ -1298,7 +2015,32 @@ class SemanticPclNode:
             ("depth_input_topic", self.depth_input_topic or "-"),
             ("downsample", str(int(self.downsample_factor))),
             ("sync_slop_sec", f"{self.sync_slop_sec:.6f}"),
+            ("pair_max_dt_sec", f"{self.pair_max_dt_sec:.6f}"),
             ("sync_queue_size", str(int(self.sync_queue_size))),
+            ("undistort_semantic", str(bool(self.undistort_semantic))),
+            ("undistort_alpha", f"{self.undistort_alpha:.2f}"),
+            ("rolling_shutter_enable", str(bool(self.rolling_shutter_enable))),
+            ("rolling_shutter_readout_sec", f"{self.rolling_shutter_readout_sec:.6f}"),
+            ("rolling_shutter_direction", self.rolling_shutter_direction),
+            ("imu_topic", self.imu_topic or "-"),
+            ("imu_frame", self.imu_frame or "-"),
+            ("camera_metadata_topic", self.camera_metadata_topic or "-"),
+            ("metadata_readout_key", str(int(self.metadata_readout_key))),
+            ("metadata_readout_scale", f"{self.metadata_readout_scale:.6g}"),
+            ("metadata_max_dt_sec", f"{self.metadata_max_dt_sec:.3f}"),
+            ("lidar_deskew_enable", str(bool(self.lidar_deskew_enable))),
+            ("lidar_deskew_mode", self.lidar_deskew_mode),
+            ("lidar_deskew_ref", self.lidar_deskew_ref),
+            ("lidar_time_field", self.lidar_time_field),
+            ("lidar_time_scale", f"{self.lidar_time_scale:.3g}"),
+            ("lidar_imu_topic", self.lidar_imu_topic or "-"),
+            ("lidar_imu_frame", self.lidar_imu_frame or "-"),
+            ("lidar_imu_cache_size", str(int(self.lidar_imu_cache_size))),
+            ("lidar_imu_cache_max_dt_sec", f"{self.lidar_imu_cache_max_dt_sec:.3f}"),
+            (
+                "lidar_imu_accel_gravity_compensated",
+                str(bool(self.lidar_imu_accel_is_gravity_compensated)),
+            ),
             ("max_depth_m", f"{self.max_depth_m:.3f}" if self.max_depth_m is not None else "-"),
             ("cloud_time_offset_sec", f"{self.cloud_time_offset_sec:.6f}"),
             ("cloud_stamp_source", self.cloud_stamp_source),
@@ -1349,11 +2091,27 @@ class SemanticPclNode:
 
         return render_kv_table(rows)
 
+    def _passes_pair_gate(self, stamp_a: rospy.Time, stamp_b: rospy.Time, ctx: str) -> bool:
+        if self.pair_max_dt_sec <= 0.0:
+            return True
+        dt = abs((stamp_a - stamp_b).to_sec())
+        if dt <= self.pair_max_dt_sec:
+            return True
+        self._log.warn(
+            ctx,
+            "Dropping pair: |Δt|=%.6fs > %.6fs",
+            dt,
+            float(self.pair_max_dt_sec),
+        )
+        return False
+
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("depth_callback"):
             sem_stamp = sem_msg.header.stamp
             depth_stamp = depth_msg.header.stamp
+            if not self._passes_pair_gate(sem_stamp, depth_stamp, "_depth_callback"):
+                return
             chosen_stamp = self._choose_cloud_stamp(sem_stamp, depth_stamp, "depth")
             stamp = self._apply_cloud_time_offset(chosen_stamp)
             self._log_stamp_debug(
@@ -1408,7 +2166,13 @@ class SemanticPclNode:
                 invalid_raw = (depth_raw == 0) | (
                     depth_raw == np.iinfo(np.uint16).max
                 )
-            confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
+            confidence = (
+                image_to_numpy(conf_msg).astype(np.float32, copy=False)
+                if conf_msg
+                else None
+            )
+            if confidence is not None and self._undistort_active:
+                confidence = self._undistort_array(confidence, interpolation="linear")
 
             if self.downsample_factor > 1:
                 f = self.downsample_factor
@@ -1534,6 +2298,8 @@ class SemanticPclNode:
         with self._maybe_profile("lidar_callback"):
             sem_stamp = sem_msg.header.stamp
             lidar_stamp = lidar_msg.header.stamp
+            if not self._passes_pair_gate(sem_stamp, lidar_stamp, "_lidar_callback"):
+                return
             chosen_stamp = self._choose_cloud_stamp(sem_stamp, lidar_stamp, "lidar")
             stamp = self._apply_cloud_time_offset(chosen_stamp)
             self._log_stamp_debug(
@@ -1595,7 +2361,11 @@ class SemanticPclNode:
                     )
                     self._warned_rgb_color_map = True
 
-            confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
+            confidence = (
+                image_to_numpy(conf_msg).astype(np.float32, copy=False)
+                if conf_msg
+                else None
+            )
             if self.downsample_factor > 1:
                 f = self.downsample_factor
                 if labels is not None:
@@ -1608,24 +2378,108 @@ class SemanticPclNode:
             else:
                 intrinsics = self.intrinsics
 
-            points = pointcloud2_to_xyz(lidar_msg)
+            if self.lidar_deskew_enable:
+                points, t_raw = pointcloud2_to_xyz_t(
+                    lidar_msg, time_field=self.lidar_time_field
+                )
+                points = self._deskew_lidar_points(points, t_raw, lidar_stamp)
+            else:
+                points = pointcloud2_to_xyz(lidar_msg)
+            debug_colors = None
+            if self.debug_project_lidar and self.debug_projected_colorize == "depth":
+                points_cam_dbg = transform_points(camera_T_lidar, points)
+                debug_colors = self._depth_to_debug_colors(points_cam_dbg[:, 2])
 
             if self.semantic_input_type == "labels":
-                semantic_obs = SemanticObservation(labels=labels, confidence=confidence)
-                point_obs = PointObservation(points_xyz=points)
-                pcl = fuse_lidar_semantics(
-                    semantic_obs,
-                    point_obs,
-                    intrinsics,
-                    camera_T_lidar,
-                    target_T_lidar,
-                    include_unlabeled=self.include_unlabeled,
+                h, w = labels.shape
+                uv, inside = self._project_lidar_points(
+                    points, intrinsics, camera_T_lidar, (w, h), sem_msg.header.stamp
                 )
+                if self.debug_project_lidar and labels is not None:
+                    base = (labels.astype(np.int32) % 256).astype(np.uint8)
+                    base_rgb = np.stack((base, base, base), axis=-1)
+                    self._publish_lidar_projection_debug(
+                        base_rgb,
+                        (h, w),
+                        uv,
+                        sem_msg.header,
+                        colors_u8=debug_colors,
+                    )
+                uv_inside = uv[inside]
+                u = uv_inside[:, 0].astype(int)
+                v = uv_inside[:, 1].astype(int)
+                in_bounds = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+                if not np.all(in_bounds):
+                    inside_idx = np.nonzero(inside)[0]
+                    inside = inside.copy()
+                    inside[inside_idx[~in_bounds]] = False
+                    u = u[in_bounds]
+                    v = v[in_bounds]
+
+                labeled_points = points[inside]
+                if labeled_points.shape[0] == 0 and not self.include_unlabeled:
+                    pcl = SemanticPointCloud(
+                        np.empty((0, 3)), np.empty((0,), dtype=np.int64), None
+                    )
+                else:
+                    labels_in = labels[v, u]
+                    if confidence is not None:
+                        conf_in = confidence[v, u].astype(np.float32, copy=False)
+                    else:
+                        conf_in = None
+                    points_target_labeled = transform_points(
+                        target_T_lidar, labeled_points
+                    )
+                    if self.include_unlabeled:
+                        unlabeled_points = points[~inside]
+                        points_all = np.vstack(
+                            (
+                                points_target_labeled,
+                                transform_points(target_T_lidar, unlabeled_points),
+                            )
+                        )
+                        labels_all = np.concatenate(
+                            (
+                                labels_in.astype(np.int64),
+                                np.full(
+                                    unlabeled_points.shape[0],
+                                    -1,
+                                    dtype=np.int64,
+                                ),
+                            )
+                        )
+                        if conf_in is not None:
+                            conf_all = np.concatenate(
+                                (
+                                    conf_in.astype(np.float32, copy=False),
+                                    np.zeros(
+                                        unlabeled_points.shape[0], dtype=np.float32
+                                    ),
+                                )
+                            )
+                        else:
+                            conf_all = None
+                        pcl = SemanticPointCloud(points_all, labels_all, conf_all)
+                    else:
+                        pcl = SemanticPointCloud(
+                            points_target_labeled,
+                            labels_in.astype(np.int64),
+                            conf_in,
+                        )
             else:
                 h, w = packed_img.shape
-                uv, inside = project_points_to_image(
-                    points, intrinsics, camera_T_lidar, (w, h)
+                uv, inside = self._project_lidar_points(
+                    points, intrinsics, camera_T_lidar, (w, h), sem_msg.header.stamp
                 )
+                if self.debug_project_lidar:
+                    base_rgb = packed_rgb_to_triplets(packed_img)
+                    self._publish_lidar_projection_debug(
+                        base_rgb,
+                        (h, w),
+                        uv,
+                        sem_msg.header,
+                        colors_u8=debug_colors,
+                    )
                 uv_inside = uv[inside]
                 u = uv_inside[:, 0].astype(int)
                 v = uv_inside[:, 1].astype(int)
@@ -1674,6 +2528,18 @@ class SemanticPclNode:
                     conf_all = conf_in
 
                 pcl = SemanticPointCloud(points_all, labels_all, conf_all)
+
+            if self.max_depth_m is not None and pcl.points_xyz.shape[0]:
+                ranges = np.linalg.norm(pcl.points_xyz, axis=1)
+                keep = ranges <= float(self.max_depth_m)
+                if not np.all(keep):
+                    pcl = SemanticPointCloud(
+                        pcl.points_xyz[keep],
+                        pcl.labels[keep],
+                        pcl.confidence[keep] if pcl.confidence is not None else None,
+                    )
+                    if rgb_values is not None:
+                        rgb_values = rgb_values[keep]
 
             if self.debug and not self._logged_lidar_summary:
                 if pcl.points_xyz.shape[0]:
@@ -1728,8 +2594,8 @@ class SemanticPclNode:
 
 def main():
     log_level = rospy.DEBUG if _rosargv_bool("debug", False) else rospy.INFO
-    rospy.init_node("semantic_pcl_node", log_level=log_level)
-    SemanticPclNode()
+    rospy.init_node("colored_pcl_node", log_level=log_level)
+    ColoredPclNode()
     rospy.spin()
 
 

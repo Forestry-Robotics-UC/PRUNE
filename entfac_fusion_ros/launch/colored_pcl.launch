@@ -11,8 +11,11 @@
   <arg name="output_topic" default="semantic_pointcloud"/>
 
   <rosparam command="load"
-            file="$(find entfac_fusion_ros)/config/semantic_pcl.yaml"
-            ns="semantic_pcl_node"/>
+            file="$(find entfac_fusion_ros)/config/core.yaml"
+            ns="colored_pcl_node"/>
+  <rosparam command="load"
+            file="$(find entfac_fusion_ros)/config/expert.yaml"
+            ns="colored_pcl_node"/>
 
   <!-- Optional decompression via image_transport (semantic, confidence, depth) -->
   <group if="$(arg use_republish)">
@@ -26,7 +29,7 @@
           args="compressed in:=$(arg confidence_in_topic) raw out:=$(arg confidence_topic)"/>
   </group>
 
-  <node pkg="entfac_fusion_ros" type="semantic_pcl_node.py" name="semantic_pcl_node" output="screen"
+  <node pkg="entfac_fusion_ros" type="colored_pcl_node.py" name="colored_pcl_node" output="screen"
         args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')">
     <remap from="semantic_pointcloud" to="$(arg output_topic)"/>
   </node>
