@@ -1,13 +1,12 @@
 # Public API (v1.0)
 
-Only the following interfaces are considered **public and stable** for v1.0.
-Everything else in the repository is internal and may change without notice.
+Only these interfaces are considered stable.
 
 ## `entfac_fusion_core` (ROS-agnostic)
 
 - Fusion functions:
-  - `entfac_fusion_core.semantic_pcl.fuse_depth_semantics`
-  - `entfac_fusion_core.semantic_pcl.fuse_lidar_semantics`
+  - `entfac_fusion_core.colored_pcl.fuse_depth_semantics`
+  - `entfac_fusion_core.colored_pcl.fuse_lidar_semantics`
 - Dataclasses:
   - `entfac_fusion_core.types.observations.SemanticObservation`
   - `entfac_fusion_core.types.observations.DepthObservation`
@@ -20,8 +19,9 @@ Everything else in the repository is internal and may change without notice.
 
 ## `entfac_fusion_ros` (ROS1 Noetic)
 
-- Node:
-  - `entfac_fusion_ros/scripts/semantic_pcl_node.py` (executable entrypoint)
-  - Interface contract documented in `entfac_fusion_ros.semantic_pcl_node`
-    docstring and in `manual/ros_contract`.
-
+- Node executable:
+  - `entfac_fusion_ros/scripts/colored_pcl_node.py`
+- Node implementation:
+  - `entfac_fusion_ros/entfac_fusion_ros/colored_pcl_node.py`
+- ROS contract:
+  - `docs/manual/ros_contract.md`

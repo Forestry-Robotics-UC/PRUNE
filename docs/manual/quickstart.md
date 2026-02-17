@@ -2,8 +2,6 @@
 
 ## Core (NumPy-only)
 
-Install Python deps:
-
 ```bash
 pip install -r requirements.txt
 pytest -q
@@ -18,7 +16,18 @@ rosdep update
 rosdep install --from-paths src --ignore-src -r -y
 catkin_make
 source devel/setup.bash
-roslaunch entfac_fusion_ros semantic_pcl.launch
+roslaunch entfac_fusion_ros colored_pcl.launch
+```
+
+Node defaults are split into:
+
+- `entfac_fusion_ros/config/core.yaml`
+- `entfac_fusion_ros/config/expert.yaml`
+
+Forestsphere profile:
+
+```bash
+roslaunch entfac_fusion_ros forestsphere.launch
 ```
 
 ## Build docs (Sphinx)
@@ -27,4 +36,3 @@ roslaunch entfac_fusion_ros semantic_pcl.launch
 pip install -r docs/requirements.txt
 sphinx-build -b html docs docs/_build/html
 ```
-

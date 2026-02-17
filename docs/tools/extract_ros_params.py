@@ -21,7 +21,7 @@
 # Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
-#   Offline parameter extractor for semantic_pcl_node (used for documentation).
+#   Offline parameter extractor for colored_pcl_node (used for documentation).
 
 from __future__ import annotations
 
@@ -33,9 +33,8 @@ from typing import Any, Dict, List, Optional, Tuple
 NODE_PATH = (
     Path(__file__).resolve().parents[2]
     / "entfac_fusion_ros"
-    / "src"
     / "entfac_fusion_ros"
-    / "semantic_pcl_node.py"
+    / "colored_pcl_node.py"
 )
 
 

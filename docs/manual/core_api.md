@@ -2,10 +2,10 @@
 
 ## Fusion functions
 
-```{autofunction} entfac_fusion_core.semantic_pcl.fuse_depth_semantics
+```{autofunction} entfac_fusion_core.colored_pcl.fuse_depth_semantics
 ```
 
-```{autofunction} entfac_fusion_core.semantic_pcl.fuse_lidar_semantics
+```{autofunction} entfac_fusion_core.colored_pcl.fuse_lidar_semantics
 ```
 
 ## Dataclasses
@@ -36,4 +36,3 @@
 
 ```{autofunction} entfac_fusion_core.utils.validation.flatten_masked
 ```
-
