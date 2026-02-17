@@ -28,6 +28,8 @@
 import logging
 from functools import lru_cache
 
+from typing import Optional
+
 import numpy as np
 
 from entfac_fusion_core.utils.validation import ensure_float_matrix
@@ -41,12 +43,15 @@ def _meshgrid(shape):
     return np.meshgrid(np.arange(w), np.arange(h))
 
 
-def depth_to_points(depth: np.ndarray, intrinsics: np.ndarray):
+def depth_to_points(
+    depth: np.ndarray, intrinsics: np.ndarray, max_depth_m: Optional[float] = None
+):
     """Convert a depth image into 3D points in the camera frame.
 
     Args:
         depth: Depth image with shape ``(H, W)``.
         intrinsics: Camera intrinsics matrix ``K`` with shape ``(3, 3)``.
+        max_depth_m: Optional max depth in meters; values beyond are dropped.
 
     Returns:
         Tuple ``(points_xyz, valid_mask)``:
@@ -65,6 +70,8 @@ def depth_to_points(depth: np.ndarray, intrinsics: np.ndarray):
     u_coord, v_coord = _meshgrid(depth.shape)
     depth_flat = depth.reshape(-1)
     valid = np.isfinite(depth_flat) & (depth_flat > 0)
+    if max_depth_m is not None and max_depth_m > 0:
+        valid &= depth_flat <= float(max_depth_m)
 
     if not np.any(valid):
         LOGGER.warning("No valid depth values found; returning empty point cloud")

@@ -26,6 +26,8 @@
 """Single-frame semantic fusion pipelines."""
 
 import logging
+from typing import Optional
+
 import numpy as np
 
 from entfac_fusion_core.projection.depth import depth_to_points
@@ -51,6 +53,7 @@ def fuse_depth_semantics(
     intrinsics: np.ndarray,
     target_T_depth: np.ndarray,
     include_unlabeled: bool = False,
+    max_depth_m: Optional[float] = None,
 ) -> SemanticPointCloud:
     """Fuse aligned semantic + depth into a semantic point cloud in the target frame.
 
@@ -66,6 +69,7 @@ def fuse_depth_semantics(
             from the depth frame into the desired target/output frame.
         include_unlabeled: If true, keep points whose semantic label is negative
             (e.g. ``-1``). If false, drop them.
+        max_depth_m: Optional max depth in meters; values beyond are dropped.
 
     Returns:
         SemanticPointCloud in the target frame:
@@ -86,7 +90,9 @@ def fuse_depth_semantics(
     depth.validate()
     target_T_depth = require_homogeneous_transform(target_T_depth)
 
-    points_cam, valid_mask = depth_to_points(depth.depth, intrinsics)
+    points_cam, valid_mask = depth_to_points(
+        depth.depth, intrinsics, max_depth_m=max_depth_m
+    )
     if points_cam.shape[0] == 0:
         LOGGER.warning("Depth fusion received no valid points; returning empty PCL")
         return SemanticPointCloud(

@@ -46,6 +46,7 @@ def invert_transform(transform: np.ndarray) -> np.ndarray:
     rot = transform[:3, :3]
     trans = transform[:3, 3]
     inv = np.eye(4, dtype=float)
+    # For SE(3), inverse rotation is transpose and inverse translation is -R^T @ t
     inv[:3, :3] = rot.T
     inv[:3, 3] = -rot.T @ trans
     return inv

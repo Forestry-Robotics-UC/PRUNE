@@ -27,11 +27,11 @@
 
 The functions exported here form part of the v1.0 public API:
 
-- :func:`entfac_fusion_core.semantic_pcl.fuse_depth_semantics`
-- :func:`entfac_fusion_core.semantic_pcl.fuse_lidar_semantics`
+- :func:`entfac_fusion_core.colored_pcl.fuse_depth_semantics`
+- :func:`entfac_fusion_core.colored_pcl.fuse_lidar_semantics`
 """
 
-from entfac_fusion_core.semantic_pcl.fusion import (
+from entfac_fusion_core.colored_pcl.fusion import (
     fuse_depth_semantics,
     fuse_lidar_semantics,
 )
