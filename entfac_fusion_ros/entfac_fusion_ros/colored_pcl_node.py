@@ -107,6 +107,7 @@ import rospy
 import tf2_ros
 from message_filters import ApproximateTimeSynchronizer, Cache, Subscriber
 from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from std_msgs.msg import Float32
 from std_srvs.srv import SetBool, SetBoolResponse, Trigger, TriggerResponse
 
 # Ensure core package is importable when running from a monorepo source tree.
@@ -118,12 +119,15 @@ for parent in _THIS.parents:
         sys.path.insert(0, str(cand))
         break
 
-from entfac_fusion_core.projection.depth import depth_to_points
-from entfac_fusion_core.projection.lidar_projection import project_points_to_image
 from entfac_fusion_core.colored_pcl import (
     fuse_depth_semantics,
     fuse_lidar_semantics,
 )
+from entfac_fusion_core.colored_pcl.fusion import (
+    sample_projected_label_patches,
+    sample_projected_rgb_patches,
+)
+from entfac_fusion_core.projection.lidar_projection import project_points_to_image
 from entfac_fusion_core.transforms.se3 import transform_points
 from entfac_fusion_core.types import (
     DepthObservation,
@@ -402,6 +406,43 @@ class ColoredPclNode:
             True,
             "If true, IMU linear_acceleration is gravity-compensated (recommended).",
         )
+        self.compat_ouster_sensor_frame = self._get_param_bool(
+            "~compat_ouster_sensor_frame",
+            False,
+            "Legacy-bag compatibility: treat incoming Ouster PointCloud2 XYZ as sensor-frame points mislabeled as the LiDAR frame and convert them back into the declared LiDAR frame before deskew/projection.",
+        )
+        self.compat_declared_lidar_T_points = self._get_matrix_param(
+            "~compat_declared_lidar_T_points",
+            "Optional static 4x4 row-major matrix mapping incoming point-data coordinates into the declared LiDAR frame. Applied before deskew/projection. Overrides the built-in ~compat_ouster_sensor_frame transform when provided.",
+        )
+        self._compat_declared_lidar_T_points = None
+        if self.compat_declared_lidar_T_points is not None:
+            self._compat_declared_lidar_T_points = self.compat_declared_lidar_T_points
+            self._compat_lidar_points_status = "active (custom matrix)"
+        elif self.compat_ouster_sensor_frame:
+            # Default Ouster sensor->lidar compatibility transform for legacy bags
+            # where XYZLut output was published as os_lidar. The 38.195 mm z-offset
+            # comes from the recorded metadata.lidar_to_sensor_transform.
+            compat = np.eye(4, dtype=float)
+            compat[0, 0] = -1.0
+            compat[1, 1] = -1.0
+            compat[2, 3] = -0.038195
+            self._compat_declared_lidar_T_points = require_homogeneous_transform(compat)
+            self._compat_lidar_points_status = "active (ouster sensor->lidar)"
+        else:
+            self._compat_lidar_points_status = "disabled"
+        self._undistort_requested = bool(self.undistort_semantic)
+        self._undistort_status = (
+            "requested" if self._undistort_requested else "disabled"
+        )
+        self._rolling_shutter_requested = bool(self.rolling_shutter_enable)
+        self._rolling_shutter_status = (
+            "requested" if self._rolling_shutter_requested else "disabled"
+        )
+        self._lidar_deskew_requested = bool(self.lidar_deskew_enable)
+        self._lidar_deskew_status = (
+            "requested" if self._lidar_deskew_requested else "disabled"
+        )
 
         self.conf_topic = self._get_param_str(
             "~confidence_topic",
@@ -457,6 +498,53 @@ class ColoredPclNode:
         )
         if self.semantic_color_quantization_step < 1:
             raise ValueError("~semantic_color_quantization_step must be >= 1")
+        self.projection_patch_size = self._get_param_int(
+            "~projection_patch_size",
+            1,
+            "Odd patch size for robust LiDAR-to-image sampling (1=center pixel, 3=3x3, 5=5x5).",
+        )
+        if self.projection_patch_size < 1 or self.projection_patch_size % 2 == 0:
+            raise ValueError("~projection_patch_size must be an odd integer >= 1")
+        self.projection_confidence_min = self._get_param_float(
+            "~projection_confidence_min",
+            0.0,
+            "Minimum patch confidence required to trust transferred image color/label (0 disables).",
+        )
+        if not 0.0 <= self.projection_confidence_min <= 1.0:
+            raise ValueError("~projection_confidence_min must be in [0, 1]")
+        self.projection_occlusion_epsilon_m = self._get_param_float(
+            "~projection_occlusion_epsilon_m",
+            0.0,
+            "Allow image transfer only when the point depth is within this margin of the nearest LiDAR depth at that pixel (meters, 0 disables).",
+        )
+        if self.projection_occlusion_epsilon_m < 0.0:
+            raise ValueError("~projection_occlusion_epsilon_m must be >= 0")
+        self.projection_occlusion_radius_px = self._get_param_int(
+            "~projection_occlusion_radius_px",
+            0,
+            "Pixel radius for local min-depth occlusion gating (0 uses only the exact projected pixel).",
+        )
+        if self.projection_occlusion_radius_px < 0:
+            raise ValueError("~projection_occlusion_radius_px must be >= 0")
+        self.projection_reject_depth_edges = self._get_param_bool(
+            "~projection_reject_depth_edges",
+            False,
+            "If true, reject color/label transfer for projected points that land on strong LiDAR depth discontinuities.",
+        )
+        self.projection_depth_edge_thresh = self._get_param_float(
+            "~projection_depth_edge_thresh",
+            0.15,
+            "Normalized depth-edge threshold used when ~projection_reject_depth_edges is enabled.",
+        )
+        if not 0.0 <= self.projection_depth_edge_thresh <= 1.0:
+            raise ValueError("~projection_depth_edge_thresh must be in [0, 1]")
+        self.projection_depth_edge_radius_px = self._get_param_int(
+            "~projection_depth_edge_radius_px",
+            0,
+            "Pixel radius used to dilate the LiDAR depth-edge reject mask (helps suppress sky bleed near thin objects).",
+        )
+        if self.projection_depth_edge_radius_px < 0:
+            raise ValueError("~projection_depth_edge_radius_px must be >= 0")
 
         self.downsample_factor = self._get_param_int(
             "~downsample_factor",
@@ -479,6 +567,11 @@ class ColoredPclNode:
         )
         if self.pair_max_dt_sec < 0.0:
             raise ValueError("~pair_max_dt_sec must be >= 0")
+        self.semantic_time_offset_sec = self._get_param_float(
+            "~semantic_time_offset_sec",
+            0.0,
+            "Signed offset (seconds) applied to semantic timestamps for pairing and timestamp selection (negative shifts semantic earlier).",
+        )
         self.sync_queue_size = self._get_param_int(
             "~sync_queue_size",
             5,
@@ -527,12 +620,45 @@ class ColoredPclNode:
             False,
             "If true (lidar mode), publish a debug image with projected lidar points overlaid.",
         )
+        self.debug_project_lidar_stride = self._get_param_int(
+            "~debug_project_lidar_stride",
+            5,
+            "Subsample factor for projected LiDAR debug overlay (1 draws every projected point).",
+        )
+        if self.debug_project_lidar_stride < 1:
+            raise ValueError("~debug_project_lidar_stride must be >= 1")
+        self.debug_project_lidar_radius = self._get_param_int(
+            "~debug_project_lidar_radius",
+            0,
+            "Marker radius in pixels for the projected LiDAR debug overlay (0 draws single pixels).",
+        )
+        if self.debug_project_lidar_radius < 0:
+            raise ValueError("~debug_project_lidar_radius must be >= 0")
+        self.debug_project_lidar_outline_only = self._get_param_bool(
+            "~debug_project_lidar_outline_only",
+            False,
+            "If true, draw projected LiDAR markers as outlines so the RGB image stays visible underneath.",
+        )
+        self.debug_range_view = self._get_param_bool(
+            "~debug_range_view",
+            False,
+            "If true (lidar mode), publish LiDAR depth/edge images, a reprojection heatmap, and an alignment score.",
+        )
+        self.debug_publish_fov_points = self._get_param_bool(
+            "~debug_publish_fov_points",
+            False,
+            "If true (lidar mode), publish only the LiDAR points that passed the camera FOV test as a debug PointCloud2 in the LiDAR frame.",
+        )
         # Fixed debug projection settings to avoid extra parameters.
         self.debug_projected_topic = "/debug/lidar_projection"
         self.debug_projected_colorize = "depth"
         self.debug_projected_depth_min = 0.0
         self.debug_projected_depth_max = 0.0
-        self.debug_projected_stride = 5
+        self.debug_lidar_depth_topic = "/debug/lidar_depth"
+        self.debug_lidar_edge_topic = "/debug/lidar_edge"
+        self.debug_reprojection_heatmap_topic = "/debug/reprojection_heatmap"
+        self.debug_alignment_score_topic = "/debug/alignment_score"
+        self.debug_fov_points_topic = "/debug/lidar_points_in_fov"
 
         self.static_target_T_depth = self._get_matrix_param(
             "~static_target_T_depth",
@@ -608,6 +734,28 @@ class ColoredPclNode:
             self._debug_proj_pub = rospy.Publisher(
                 self.debug_projected_topic, Image, queue_size=1
             )
+        self._debug_depth_pub = None
+        self._debug_edge_pub = None
+        self._debug_heatmap_pub = None
+        self._debug_score_pub = None
+        self._debug_fov_points_pub = None
+        if self.debug_range_view:
+            self._debug_depth_pub = rospy.Publisher(
+                self.debug_lidar_depth_topic, Image, queue_size=1
+            )
+            self._debug_edge_pub = rospy.Publisher(
+                self.debug_lidar_edge_topic, Image, queue_size=1
+            )
+            self._debug_heatmap_pub = rospy.Publisher(
+                self.debug_reprojection_heatmap_topic, Image, queue_size=1
+            )
+            self._debug_score_pub = rospy.Publisher(
+                self.debug_alignment_score_topic, Float32, queue_size=1
+            )
+        if self.debug_publish_fov_points:
+            self._debug_fov_points_pub = rospy.Publisher(
+                self.debug_fov_points_topic, PointCloud2, queue_size=1
+            )
 
         self.target_T_depth = None
         self.camera_T_lidar = None
@@ -634,8 +782,11 @@ class ColoredPclNode:
         self._lidar_imu_cache = None
         self._lidar_imu_sub = None
         self._lidar_imu_to_lidar_R = None
+        self._rolling_shutter_log_at = 0.0
+        self._rolling_shutter_warn_at = 0.0
         self._lidar_deskew_log_at = 0.0
         self._lidar_deskew_warn_at = 0.0
+        self._lidar_deskew_missing_time_warn_at = 0.0
 
         self._rgb_lut = None
         self._rgb_lut_num_labels = None
@@ -702,6 +853,8 @@ class ColoredPclNode:
 
         self._register_subscribers()
         self._log.info("__init__", "\n%s", self._render_startup_table())
+        self._log_correction_statuses()
+        self._log_startup_transforms()
         self._log.debug(
             "__init__",
             "Runtime: target_frame=%s camera_frame=%s semantic_input_type=%s colorize_labels=%s include_unlabeled=%s downsample=%d",
@@ -812,6 +965,66 @@ class ColoredPclNode:
     # Startup report
     # ----------------------------
 
+    def _log_startup_transforms(self):
+        """Emit a compact info-level report of the transforms active at startup."""
+        if self.mode == "depth":
+            src = "static_target_T_depth" if self.static_target_T_depth is not None else "tf2"
+            label = f"{self._depth_frame or '<depth_frame>'} -> {self.target_frame}"
+            if self.target_T_depth is None:
+                self._log.info(
+                    "_log_startup_transforms",
+                    "startup transform target_T_depth [%s] (%s): pending",
+                    label,
+                    src,
+                )
+            else:
+                self._log.info(
+                    "_log_startup_transforms",
+                    "startup transform target_T_depth [%s] (%s):\n%s",
+                    label,
+                    src,
+                    format_matrix(self.target_T_depth),
+                )
+            return
+
+        src_cam = "static_camera_T_lidar" if self.static_camera_T_lidar is not None else "tf2"
+        src_tgt = "static_target_T_lidar" if self.static_target_T_lidar is not None else "tf2"
+        lidar_label = self._lidar_frame or "<lidar_frame>"
+        cam_label = f"{lidar_label} -> {self.camera_frame}"
+        tgt_label = f"{lidar_label} -> {self.target_frame}"
+
+        if self.camera_T_lidar is None:
+            self._log.info(
+                "_log_startup_transforms",
+                "startup transform camera_T_lidar [%s] (%s): pending",
+                cam_label,
+                src_cam,
+            )
+        else:
+            self._log.info(
+                "_log_startup_transforms",
+                "startup transform camera_T_lidar [%s] (%s):\n%s",
+                cam_label,
+                src_cam,
+                format_matrix(self.camera_T_lidar),
+            )
+
+        if self.target_T_lidar is None:
+            self._log.info(
+                "_log_startup_transforms",
+                "startup transform target_T_lidar [%s] (%s): pending",
+                tgt_label,
+                src_tgt,
+            )
+        else:
+            self._log.info(
+                "_log_startup_transforms",
+                "startup transform target_T_lidar [%s] (%s):\n%s",
+                tgt_label,
+                src_tgt,
+                format_matrix(self.target_T_lidar),
+            )
+
     def _log_param_report(self):
         self._log.info("_log_param_report", "colored_pcl_node debug report:")
         self._log.info(
@@ -871,6 +1084,16 @@ class ColoredPclNode:
                 format_matrix(self.target_T_lidar),
             )
 
+    def _log_correction_statuses(self) -> None:
+        self._log.info(
+            "_log_correction_statuses",
+            "correction status: undistort=%s rolling_shutter=%s lidar_deskew=%s lidar_points_compat=%s",
+            self._undistort_status,
+            self._rolling_shutter_status,
+            self._lidar_deskew_status,
+            self._compat_lidar_points_status,
+        )
+
     # ----------------------------
     # Subscriptions / TF
     # ----------------------------
@@ -882,8 +1105,12 @@ class ColoredPclNode:
             if self.conf_topic
             else None
         )
+        self._rolling_shutter_status = (
+            "disabled" if not self._rolling_shutter_requested else "requested"
+        )
         if self.rolling_shutter_enable:
             if not self.imu_topic:
+                self._rolling_shutter_status = "disabled (missing ~imu_topic)"
                 self._log.warn(
                     "_register_subscribers",
                     "rolling_shutter_enable is true but ~imu_topic is empty; disabling rolling shutter.",
@@ -892,6 +1119,14 @@ class ColoredPclNode:
             else:
                 self._imu_sub = Subscriber(self.imu_topic, Imu, queue_size=2000)
                 self._imu_cache = Cache(self._imu_sub, self.imu_cache_size)
+                if self.rolling_shutter_readout_sec > 0.0:
+                    self._rolling_shutter_status = "armed (fixed readout)"
+                elif self.camera_metadata_topic and self.metadata_readout_key >= 0:
+                    self._rolling_shutter_status = "armed (metadata readout)"
+                else:
+                    self._rolling_shutter_status = (
+                        "idle (readout=0 and metadata disabled)"
+                    )
             if self.camera_metadata_topic and self.metadata_readout_key >= 0:
                 try:
                     from realsense2_camera_msgs.msg import Metadata  # type: ignore
@@ -908,8 +1143,12 @@ class ColoredPclNode:
                         self._metadata_callback,
                         queue_size=2000,
                     )
+        self._lidar_deskew_status = (
+            "disabled" if not self._lidar_deskew_requested else "requested"
+        )
         if self.lidar_deskew_enable:
             if not self.lidar_imu_topic:
+                self._lidar_deskew_status = "disabled (missing ~lidar_imu_topic)"
                 self._log.warn(
                     "_register_subscribers",
                     "lidar_deskew_enable is true but ~lidar_imu_topic is empty; disabling deskew.",
@@ -922,6 +1161,7 @@ class ColoredPclNode:
                 self._lidar_imu_cache = Cache(
                     self._lidar_imu_sub, self.lidar_imu_cache_size
                 )
+                self._lidar_deskew_status = "armed"
         if self.mode == "depth":
             depth_sub = Subscriber(self.depth_input_topic, Image)
             subs = [semantic_sub, depth_sub]
@@ -1174,9 +1414,18 @@ class ColoredPclNode:
             return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
         readout_sec = self._get_readout_sec(stamp)
         if readout_sec <= 0.0:
+            self._rolling_shutter_status = "idle (readout<=0)"
             return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
         omega_cam = self._lookup_imu_omega(stamp)
         if omega_cam is None:
+            self._rolling_shutter_status = "armed (waiting for IMU)"
+            now = time.time()
+            if now - self._rolling_shutter_warn_at > 2.0:
+                self._log.warn(
+                    "_project_lidar_points",
+                    "Rolling shutter enabled but IMU lookup failed; using uncorrected projection.",
+                )
+                self._rolling_shutter_warn_at = now
             return project_points_to_image(points, intrinsics, camera_T_lidar, image_size)
 
         w, h = int(image_size[0]), int(image_size[1])
@@ -1198,6 +1447,17 @@ class ColoredPclNode:
         dt = np.where(np.isfinite(dt), dt, 0.0)
         cross = np.cross(omega_cam.reshape(1, 3), points_cam)
         points_cam = points_cam + dt.reshape(-1, 1) * cross
+        self._rolling_shutter_status = "active"
+        now = time.time()
+        if now - self._rolling_shutter_log_at > 2.0:
+            self._log.info(
+                "_project_lidar_points",
+                "Rolling shutter correction active: readout=%.6fs direction=%s imu_topic=%s",
+                float(readout_sec),
+                self.rolling_shutter_direction,
+                self.imu_topic or "-",
+            )
+            self._rolling_shutter_log_at = now
         z = points_cam[:, 2]
         in_front = z > 0
         uv = np.zeros((points_cam.shape[0], 2), dtype=float)
@@ -1221,9 +1481,21 @@ class ColoredPclNode:
         if not self.lidar_deskew_enable:
             return points
         if t_raw is None or t_raw.size == 0:
+            self._lidar_deskew_status = (
+                f"armed (missing point time field '{self.lidar_time_field}')"
+            )
+            now = time.time()
+            if now - self._lidar_deskew_missing_time_warn_at > 2.0:
+                self._log.warn(
+                    "_deskew_lidar_points",
+                    "Deskew enabled but point cloud has no usable '%s' field; skipping deskew.",
+                    self.lidar_time_field,
+                )
+                self._lidar_deskew_missing_time_warn_at = now
             return points
         imu = self._lookup_lidar_imu(scan_stamp)
         if imu is None:
+            self._lidar_deskew_status = "armed (waiting for IMU)"
             now = time.time()
             if now - self._lidar_deskew_warn_at > 2.0:
                 self._log.warn(
@@ -1237,6 +1509,7 @@ class ColoredPclNode:
         if self.lidar_deskew_ref == "mid":
             dt = dt - 0.5 * float(np.nanmax(dt))
         now = time.time()
+        self._lidar_deskew_status = "active"
         if now - self._lidar_deskew_log_at > 2.0:
             self._log.info(
                 "_deskew_lidar_points",
@@ -1259,10 +1532,18 @@ class ColoredPclNode:
             points = points - disp
         return points
 
+    def _apply_lidar_points_compat(self, points: np.ndarray) -> np.ndarray:
+        mat = self._compat_declared_lidar_T_points
+        if mat is None:
+            return points
+        return transform_points(mat, points)
+
     def _maybe_init_undistort(self) -> None:
         if not self.undistort_semantic:
+            self._undistort_status = "disabled"
             return
         if self.mode != "lidar":
+            self._undistort_status = f"disabled (mode={self.mode})"
             self._log.warn(
                 "_maybe_init_undistort",
                 "undistort_semantic enabled but mode=%s; undistort is only applied in lidar mode.",
@@ -1270,12 +1551,14 @@ class ColoredPclNode:
             )
             return
         if self._camera_distortion is None or not self._camera_distortion.size:
+            self._undistort_status = "disabled (CameraInfo has no distortion)"
             self._log.warn(
                 "_maybe_init_undistort",
                 "CameraInfo has no distortion coefficients; skipping undistort.",
             )
             return
         if np.allclose(self._camera_distortion, 0.0):
+            self._undistort_status = "disabled (zero distortion coefficients)"
             self._log.info(
                 "_maybe_init_undistort",
                 "CameraInfo distortion coefficients are zero; skipping undistort.",
@@ -1284,6 +1567,7 @@ class ColoredPclNode:
         try:
             import cv2  # type: ignore
         except Exception as exc:  # noqa: BLE001
+            self._undistort_status = "disabled (OpenCV unavailable)"
             self._log.warn(
                 "_maybe_init_undistort",
                 "OpenCV not available (%s); cannot undistort semantic images.",
@@ -1292,6 +1576,7 @@ class ColoredPclNode:
             return
         h, w = self._camera_info_size
         if h <= 0 or w <= 0:
+            self._undistort_status = "disabled (invalid CameraInfo image size)"
             self._log.warn(
                 "_maybe_init_undistort",
                 "CameraInfo image size invalid (%d x %d); skipping undistort.",
@@ -1318,6 +1603,7 @@ class ColoredPclNode:
                 k_mat, d_vec, np.eye(3), new_k, (w, h), cv2.CV_32FC1
             )
         else:
+            self._undistort_status = f"disabled (unsupported model {model})"
             self._log.warn(
                 "_maybe_init_undistort",
                 "Unsupported distortion_model=%s; skipping undistort.",
@@ -1329,6 +1615,7 @@ class ColoredPclNode:
         self._undistort_map1 = map1
         self._undistort_map2 = map2
         self._undistort_active = True
+        self._undistort_status = "active"
         self.intrinsics = np.asarray(new_k, dtype=float)
         self._log.info(
             "_maybe_init_undistort",
@@ -1631,6 +1918,11 @@ class ColoredPclNode:
 
         return sem_stamp if sem_stamp > other_stamp else other_stamp
 
+    def _apply_stamp_offset(self, stamp: rospy.Time, offset_sec: float) -> rospy.Time:
+        if stamp == rospy.Time() or offset_sec == 0.0:
+            return stamp
+        return stamp + rospy.Duration(offset_sec)
+
     def _log_stamp_debug(
         self,
         context: str,
@@ -1639,20 +1931,26 @@ class ColoredPclNode:
         other_label: str,
         chosen_stamp: rospy.Time,
         shifted_stamp: rospy.Time,
+        sem_pair_stamp: Optional[rospy.Time] = None,
     ) -> None:
         if not self.debug:
             return
-        dt_sec = (sem_stamp - other_stamp).to_sec()
+        sem_pair_stamp = sem_stamp if sem_pair_stamp is None else sem_pair_stamp
+        raw_dt_sec = (sem_stamp - other_stamp).to_sec()
+        pair_dt_sec = (sem_pair_stamp - other_stamp).to_sec()
         self._log.debug(
             context,
-            "stamps: semantic=%.9f %s=%.9f dt=%.9f chosen=%.9f shifted=%.9f source=%s offset=%.6f",
+            "stamps: semantic=%.9f semantic_pair=%.9f %s=%.9f raw_dt=%.9f pair_dt=%.9f chosen=%.9f shifted=%.9f source=%s semantic_offset=%.6f cloud_offset=%.6f",
             sem_stamp.to_sec(),
+            sem_pair_stamp.to_sec(),
             other_label,
             other_stamp.to_sec(),
-            dt_sec,
+            raw_dt_sec,
+            pair_dt_sec,
             chosen_stamp.to_sec(),
             shifted_stamp.to_sec(),
             self.cloud_stamp_source,
+            float(self.semantic_time_offset_sec),
             float(self.cloud_time_offset_sec),
         )
 
@@ -1780,17 +2078,39 @@ class ColoredPclNode:
         if colors_u8 is not None:
             colors_u8 = np.asarray(colors_u8, dtype=np.uint8)
             colors_u8 = colors_u8[in_bounds]
-        stride = int(self.debug_projected_stride)
+        stride = int(self.debug_project_lidar_stride)
         if stride > 1 and u.size:
             u = u[::stride]
             v = v[::stride]
             if colors_u8 is not None:
                 colors_u8 = colors_u8[::stride]
+        radius = int(self.debug_project_lidar_radius)
         if u.size:
-            if colors_u8 is None:
-                img[v, u] = (255, 0, 0)
+            if radius <= 0:
+                if colors_u8 is None:
+                    img[v, u] = (255, 0, 0)
+                else:
+                    img[v, u] = colors_u8
             else:
-                img[v, u] = colors_u8
+                for i in range(u.size):
+                    ui = int(u[i])
+                    vi = int(v[i])
+                    color = (
+                        np.array((255, 0, 0), dtype=np.uint8)
+                        if colors_u8 is None
+                        else colors_u8[i]
+                    )
+                    u0 = max(0, ui - radius)
+                    u1 = min(w - 1, ui + radius)
+                    v0 = max(0, vi - radius)
+                    v1 = min(h - 1, vi + radius)
+                    if self.debug_project_lidar_outline_only:
+                        img[v0, u0 : u1 + 1] = color
+                        img[v1, u0 : u1 + 1] = color
+                        img[v0 : v1 + 1, u0] = color
+                        img[v0 : v1 + 1, u1] = color
+                    else:
+                        img[v0 : v1 + 1, u0 : u1 + 1] = color
         msg = Image()
         msg.header = header
         msg.height = h
@@ -1833,6 +2153,384 @@ class ColoredPclNode:
         g = np.zeros_like(r, dtype=np.uint8)
         b = ((1.0 - t) * 255.0).astype(np.uint8, copy=False)
         return np.stack((r, g, b), axis=-1)
+
+    def _publish_debug_rgb_image(self, pub, rgb_u8: np.ndarray, header) -> None:
+        if pub is None:
+            return
+        rgb_u8 = np.ascontiguousarray(np.asarray(rgb_u8, dtype=np.uint8))
+        if rgb_u8.ndim != 3 or rgb_u8.shape[2] != 3:
+            raise ValueError(f"rgb_u8 must be (H, W, 3), got {rgb_u8.shape}")
+        h, w = rgb_u8.shape[:2]
+        msg = Image()
+        msg.header = header
+        msg.height = int(h)
+        msg.width = int(w)
+        msg.encoding = "rgb8"
+        msg.is_bigendian = 0
+        msg.step = int(w * 3)
+        msg.data = rgb_u8.tobytes()
+        pub.publish(msg)
+
+    def _publish_debug_fov_points(self, points_lidar: np.ndarray, frame_id: str, stamp) -> None:
+        if self._debug_fov_points_pub is None:
+            return
+        points_lidar = np.asarray(points_lidar, dtype=np.float32)
+        if points_lidar.ndim != 2 or points_lidar.shape[1] != 3:
+            raise ValueError(
+                f"points_lidar must be (N, 3), got shape {points_lidar.shape}"
+            )
+        pcl = SemanticPointCloud(
+            points_xyz=points_lidar,
+            labels=np.full(points_lidar.shape[0], -1, dtype=np.int64),
+            confidence=None,
+        )
+        msg = semantic_pointcloud_to_msg(
+            pcl,
+            frame_id,
+            stamp,
+            colorize_labels=False,
+        )
+        self._debug_fov_points_pub.publish(msg)
+
+    def _float_map_to_heatmap_rgb(self, arr: np.ndarray) -> np.ndarray:
+        arr = np.asarray(arr, dtype=np.float32)
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        if arr.size == 0:
+            return np.zeros((0, 0, 3), dtype=np.uint8)
+        amin = float(np.min(arr))
+        amax = float(np.max(arr))
+        if amax > amin:
+            t = (arr - amin) / (amax - amin)
+        else:
+            t = np.zeros_like(arr, dtype=np.float32)
+        t = np.clip(t, 0.0, 1.0)
+        r = ((1.0 - t) * 255.0).astype(np.uint8, copy=False)
+        g = (t * 255.0).astype(np.uint8, copy=False)
+        b = np.zeros_like(r, dtype=np.uint8)
+        return np.stack((r, g, b), axis=-1)
+
+    def _depth_map_to_rgb(self, depth_map: np.ndarray) -> np.ndarray:
+        depth_map = np.asarray(depth_map, dtype=np.float32)
+        valid = np.isfinite(depth_map) & (depth_map > 0.0)
+        if not np.any(valid):
+            h, w = depth_map.shape
+            return np.zeros((h, w, 3), dtype=np.uint8)
+        vals = depth_map[valid]
+        dmin = float(np.min(vals))
+        dmax = float(np.max(vals))
+        if dmax <= dmin:
+            dmax = dmin + 1e-3
+        norm = np.zeros_like(depth_map, dtype=np.float32)
+        norm[valid] = (depth_map[valid] - dmin) / (dmax - dmin)
+        norm = np.clip(norm, 0.0, 1.0)
+        rgb = self._float_map_to_heatmap_rgb(norm)
+        rgb[~valid] = 0
+        return rgb
+
+    def _rasterize_lidar_depth_map(
+        self,
+        points: np.ndarray,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_shape: Tuple[int, int],
+    ) -> np.ndarray:
+        h, w = int(image_shape[0]), int(image_shape[1])
+        points_cam = transform_points(camera_T_lidar, points)
+        z = points_cam[:, 2]
+        in_front = z > 0.0
+        depth = np.full((h, w), np.inf, dtype=np.float32)
+        if not np.any(in_front):
+            return depth
+
+        pts = points_cam[in_front]
+        z = z[in_front]
+        fx, fy = intrinsics[0, 0], intrinsics[1, 1]
+        cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+        u = (pts[:, 0] * fx / z) + cx
+        v = (pts[:, 1] * fy / z) + cy
+        u = u.astype(np.int32, copy=False)
+        v = v.astype(np.int32, copy=False)
+        inside = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        if not np.any(inside):
+            return depth
+
+        u = u[inside]
+        v = v[inside]
+        z = z[inside].astype(np.float32, copy=False)
+        flat = depth.reshape(-1)
+        idx = v * w + u
+        np.minimum.at(flat, idx, z)
+        return flat.reshape((h, w))
+
+    def _depth_map_to_edge_map(self, depth_map: np.ndarray) -> np.ndarray:
+        depth_map = np.asarray(depth_map, dtype=np.float32)
+        valid = np.isfinite(depth_map) & (depth_map > 0.0)
+        edges = np.zeros_like(depth_map, dtype=np.float32)
+        if not np.any(valid):
+            return edges
+
+        dx = np.abs(depth_map[:, 1:] - depth_map[:, :-1])
+        dy = np.abs(depth_map[1:, :] - depth_map[:-1, :])
+        mask_x = valid[:, 1:] & valid[:, :-1]
+        mask_y = valid[1:, :] & valid[:-1, :]
+        edges[:, 1:][mask_x] = dx[mask_x]
+        edges[1:, :][mask_y] = np.maximum(edges[1:, :][mask_y], dy[mask_y])
+
+        max_val = float(np.max(edges)) if edges.size else 0.0
+        if max_val > 0.0:
+            edges /= max_val
+        return edges
+
+    def _reduce_image_neighborhood(
+        self,
+        image: np.ndarray,
+        *,
+        radius_px: int,
+        op: str,
+    ) -> np.ndarray:
+        image = np.asarray(image, dtype=np.float32)
+        radius_px = int(radius_px)
+        if radius_px <= 0:
+            return image
+        if op == "min":
+            out = np.full_like(image, np.inf, dtype=np.float32)
+            reducer = np.minimum
+        elif op == "max":
+            out = np.zeros_like(image, dtype=np.float32)
+            reducer = np.maximum
+        else:
+            raise ValueError(f"Unsupported neighborhood reduction op: {op}")
+
+        h, w = image.shape[:2]
+        for dy in range(-radius_px, radius_px + 1):
+            dst_y0 = max(0, dy)
+            dst_y1 = min(h, h + dy)
+            src_y0 = max(0, -dy)
+            src_y1 = min(h, h - dy)
+            if dst_y0 >= dst_y1:
+                continue
+            for dx in range(-radius_px, radius_px + 1):
+                dst_x0 = max(0, dx)
+                dst_x1 = min(w, w + dx)
+                src_x0 = max(0, -dx)
+                src_x1 = min(w, w - dx)
+                if dst_x0 >= dst_x1:
+                    continue
+                reducer(
+                    out[dst_y0:dst_y1, dst_x0:dst_x1],
+                    image[src_y0:src_y1, src_x0:src_x1],
+                    out=out[dst_y0:dst_y1, dst_x0:dst_x1],
+                )
+        return out
+
+    def _compute_projection_quality_mask(
+        self,
+        *,
+        points_all: np.ndarray,
+        points_selected: np.ndarray,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_shape: Tuple[int, int],
+        u: np.ndarray,
+        v: np.ndarray,
+        point_confidence: Optional[np.ndarray],
+    ) -> np.ndarray:
+        u = np.asarray(u, dtype=np.int32).reshape(-1)
+        v = np.asarray(v, dtype=np.int32).reshape(-1)
+        keep = np.ones(u.shape[0], dtype=bool)
+        if keep.size == 0:
+            return keep
+
+        if (
+            self.projection_confidence_min <= 0.0
+            and self.projection_occlusion_epsilon_m <= 0.0
+            and self.projection_occlusion_radius_px <= 0
+            and not self.projection_reject_depth_edges
+        ):
+            return keep
+
+        depth_map = None
+        if (
+            self.projection_occlusion_epsilon_m > 0.0
+            or self.projection_reject_depth_edges
+        ):
+            depth_map = self._rasterize_lidar_depth_map(
+                points_all, intrinsics, camera_T_lidar, image_shape
+            )
+
+        effective_conf = None
+        if point_confidence is not None:
+            effective_conf = np.asarray(point_confidence, dtype=np.float32).reshape(-1)
+
+        if self.projection_occlusion_epsilon_m > 0.0 and depth_map is not None:
+            points_cam = transform_points(camera_T_lidar, points_selected)
+            point_depth = np.asarray(points_cam[:, 2], dtype=np.float32)
+            depth_ref = depth_map
+            if self.projection_occlusion_radius_px > 0:
+                depth_ref = self._reduce_image_neighborhood(
+                    depth_map,
+                    radius_px=self.projection_occlusion_radius_px,
+                    op="min",
+                )
+            nearest_depth = depth_ref[v, u]
+            keep &= np.isfinite(nearest_depth)
+            depth_margin = np.asarray(
+                point_depth - nearest_depth,
+                dtype=np.float32,
+            )
+            keep &= depth_margin <= float(self.projection_occlusion_epsilon_m)
+            occ_conf = np.clip(
+                1.0 - np.maximum(depth_margin, 0.0) / float(self.projection_occlusion_epsilon_m),
+                0.0,
+                1.0,
+            ).astype(np.float32, copy=False)
+            effective_conf = (
+                occ_conf
+                if effective_conf is None
+                else np.minimum(effective_conf, occ_conf)
+            )
+
+        if self.projection_reject_depth_edges and depth_map is not None:
+            edge_map = self._depth_map_to_edge_map(depth_map)
+            if self.projection_depth_edge_radius_px > 0:
+                edge_map = self._reduce_image_neighborhood(
+                    edge_map,
+                    radius_px=self.projection_depth_edge_radius_px,
+                    op="max",
+                )
+            edge_values = np.asarray(edge_map[v, u], dtype=np.float32)
+            keep &= edge_values < float(self.projection_depth_edge_thresh)
+            edge_conf = np.clip(1.0 - edge_values, 0.0, 1.0).astype(
+                np.float32,
+                copy=False,
+            )
+            effective_conf = (
+                edge_conf
+                if effective_conf is None
+                else np.minimum(effective_conf, edge_conf)
+            )
+
+        if self.projection_confidence_min > 0.0 and effective_conf is not None:
+            if effective_conf.shape[0] == keep.shape[0]:
+                keep &= effective_conf >= float(self.projection_confidence_min)
+
+        return keep
+
+    def _splat_reprojection_confidence(
+        self,
+        u: np.ndarray,
+        v: np.ndarray,
+        values: np.ndarray,
+        image_shape: Tuple[int, int],
+    ) -> np.ndarray:
+        h, w = int(image_shape[0]), int(image_shape[1])
+        heat = np.zeros((h, w), dtype=np.float32)
+        counts = np.zeros((h, w), dtype=np.float32)
+        if values is None or len(values) == 0:
+            return heat
+        u = np.asarray(u, dtype=np.int32).reshape(-1)
+        v = np.asarray(v, dtype=np.int32).reshape(-1)
+        vals = np.asarray(values, dtype=np.float32).reshape(-1)
+        np.add.at(heat, (v, u), vals)
+        np.add.at(counts, (v, u), 1.0)
+        mask = counts > 0.0
+        heat[mask] /= counts[mask]
+        return heat
+
+    def _semantic_edge_map(
+        self,
+        sem_img: np.ndarray,
+        sem_type: str,
+    ) -> np.ndarray:
+        sem_type = (sem_type or "").strip().lower()
+        if sem_type == "labels":
+            labels = np.asarray(sem_img)
+            if labels.ndim == 3:
+                labels = labels[:, :, 0]
+            if labels.ndim != 2:
+                return np.zeros(labels.shape[:2], dtype=np.float32)
+            edges = np.zeros_like(labels, dtype=np.float32)
+            edges[:, 1:] = labels[:, 1:] != labels[:, :-1]
+            edges[1:, :] = np.logical_or(edges[1:, :], labels[1:, :] != labels[:-1, :])
+            return edges.astype(np.float32, copy=False)
+
+        rgb = np.asarray(sem_img)
+        if rgb.ndim != 3 or rgb.shape[2] < 3:
+            return np.zeros(rgb.shape[:2], dtype=np.float32)
+        rgb = rgb[:, :, :3].astype(np.float32, copy=False)
+        gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+        edges = np.zeros_like(gray, dtype=np.float32)
+        dx = np.abs(gray[:, 1:] - gray[:, :-1])
+        dy = np.abs(gray[1:, :] - gray[:-1, :])
+        edges[:, 1:] += dx
+        edges[1:, :] += dy
+        max_val = float(np.max(edges)) if edges.size else 0.0
+        if max_val > 0.0:
+            edges /= max_val
+        return edges
+
+    @staticmethod
+    def _edge_alignment_score(sem_edges: np.ndarray, depth_edges: np.ndarray) -> float:
+        sem = np.asarray(sem_edges, dtype=np.float32)
+        dep = np.asarray(depth_edges, dtype=np.float32)
+        if sem.shape != dep.shape or sem.size == 0:
+            return 0.0
+        denom = float(np.sqrt(np.sum(sem * sem) * np.sum(dep * dep))) + 1e-6
+        if denom <= 0.0:
+            return 0.0
+        return float(np.sum(sem * dep) / denom)
+
+    def _publish_range_view_debug(
+        self,
+        *,
+        sem_img: np.ndarray,
+        sem_type: str,
+        points: np.ndarray,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_shape: Tuple[int, int],
+        u: np.ndarray,
+        v: np.ndarray,
+        point_confidence: Optional[np.ndarray],
+        header,
+    ) -> None:
+        if (
+            self._debug_depth_pub is None
+            or self._debug_edge_pub is None
+            or self._debug_heatmap_pub is None
+            or self._debug_score_pub is None
+        ):
+            return
+
+        depth_map = self._rasterize_lidar_depth_map(
+            points, intrinsics, camera_T_lidar, image_shape
+        )
+        depth_edges = self._depth_map_to_edge_map(depth_map)
+        sem_edges = self._semantic_edge_map(sem_img, sem_type)
+        score = self._edge_alignment_score(sem_edges, depth_edges)
+        heat = self._splat_reprojection_confidence(
+            u,
+            v,
+            point_confidence,
+            image_shape,
+        )
+
+        self._publish_debug_rgb_image(
+            self._debug_depth_pub,
+            self._depth_map_to_rgb(depth_map),
+            header,
+        )
+        self._publish_debug_rgb_image(
+            self._debug_edge_pub,
+            self._float_map_to_heatmap_rgb(depth_edges),
+            header,
+        )
+        self._publish_debug_rgb_image(
+            self._debug_heatmap_pub,
+            self._float_map_to_heatmap_rgb(heat),
+            header,
+        )
+        self._debug_score_pub.publish(Float32(data=score))
 
     def _get_rgb_float_lut(self, labels_img: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
         if not self.colorize_labels:
@@ -2014,12 +2712,46 @@ class ColoredPclNode:
             ("camera_info", self.camera_info_topic),
             ("depth_input_topic", self.depth_input_topic or "-"),
             ("downsample", str(int(self.downsample_factor))),
+            ("projection_patch_size", str(int(self.projection_patch_size))),
+            ("projection_confidence_min", f"{self.projection_confidence_min:.3f}"),
+            (
+                "projection_occlusion_epsilon_m",
+                f"{self.projection_occlusion_epsilon_m:.3f}",
+            ),
+            (
+                "projection_occlusion_radius_px",
+                str(int(self.projection_occlusion_radius_px)),
+            ),
+            (
+                "projection_reject_depth_edges",
+                str(bool(self.projection_reject_depth_edges)),
+            ),
+            (
+                "projection_depth_edge_thresh",
+                f"{self.projection_depth_edge_thresh:.3f}",
+            ),
+            (
+                "projection_depth_edge_radius_px",
+                str(int(self.projection_depth_edge_radius_px)),
+            ),
             ("sync_slop_sec", f"{self.sync_slop_sec:.6f}"),
             ("pair_max_dt_sec", f"{self.pair_max_dt_sec:.6f}"),
+            ("semantic_time_offset_sec", f"{self.semantic_time_offset_sec:.6f}"),
             ("sync_queue_size", str(int(self.sync_queue_size))),
             ("undistort_semantic", str(bool(self.undistort_semantic))),
+            ("undistort_status", self._undistort_status),
             ("undistort_alpha", f"{self.undistort_alpha:.2f}"),
+            ("debug_project_lidar", str(bool(self.debug_project_lidar))),
+            ("debug_project_lidar_stride", str(int(self.debug_project_lidar_stride))),
+            ("debug_project_lidar_radius", str(int(self.debug_project_lidar_radius))),
+            (
+                "debug_project_lidar_outline_only",
+                str(bool(self.debug_project_lidar_outline_only)),
+            ),
+            ("debug_range_view", str(bool(self.debug_range_view))),
+            ("debug_publish_fov_points", str(bool(self.debug_publish_fov_points))),
             ("rolling_shutter_enable", str(bool(self.rolling_shutter_enable))),
+            ("rolling_shutter_status", self._rolling_shutter_status),
             ("rolling_shutter_readout_sec", f"{self.rolling_shutter_readout_sec:.6f}"),
             ("rolling_shutter_direction", self.rolling_shutter_direction),
             ("imu_topic", self.imu_topic or "-"),
@@ -2029,6 +2761,7 @@ class ColoredPclNode:
             ("metadata_readout_scale", f"{self.metadata_readout_scale:.6g}"),
             ("metadata_max_dt_sec", f"{self.metadata_max_dt_sec:.3f}"),
             ("lidar_deskew_enable", str(bool(self.lidar_deskew_enable))),
+            ("lidar_deskew_status", self._lidar_deskew_status),
             ("lidar_deskew_mode", self.lidar_deskew_mode),
             ("lidar_deskew_ref", self.lidar_deskew_ref),
             ("lidar_time_field", self.lidar_time_field),
@@ -2041,6 +2774,8 @@ class ColoredPclNode:
                 "lidar_imu_accel_gravity_compensated",
                 str(bool(self.lidar_imu_accel_is_gravity_compensated)),
             ),
+            ("compat_ouster_sensor_frame", str(bool(self.compat_ouster_sensor_frame))),
+            ("compat_lidar_points_status", self._compat_lidar_points_status),
             ("max_depth_m", f"{self.max_depth_m:.3f}" if self.max_depth_m is not None else "-"),
             ("cloud_time_offset_sec", f"{self.cloud_time_offset_sec:.6f}"),
             ("cloud_stamp_source", self.cloud_stamp_source),
@@ -2091,28 +2826,27 @@ class ColoredPclNode:
 
         return render_kv_table(rows)
 
-    def _passes_pair_gate(self, stamp_a: rospy.Time, stamp_b: rospy.Time, ctx: str) -> bool:
-        if self.pair_max_dt_sec <= 0.0:
-            return True
-        dt = abs((stamp_a - stamp_b).to_sec())
-        if dt <= self.pair_max_dt_sec:
-            return True
-        self._log.warn(
-            ctx,
-            "Dropping pair: |Δt|=%.6fs > %.6fs",
-            dt,
-            float(self.pair_max_dt_sec),
-        )
-        return False
-
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("depth_callback"):
             sem_stamp = sem_msg.header.stamp
             depth_stamp = depth_msg.header.stamp
-            if not self._passes_pair_gate(sem_stamp, depth_stamp, "_depth_callback"):
-                return
-            chosen_stamp = self._choose_cloud_stamp(sem_stamp, depth_stamp, "depth")
+            sem_pair_stamp = self._apply_stamp_offset(
+                sem_stamp, self.semantic_time_offset_sec
+            )
+            if self.pair_max_dt_sec > 0.0:
+                dt = abs((sem_pair_stamp - depth_stamp).to_sec())
+                if dt > self.pair_max_dt_sec:
+                    self._log.warn(
+                        "_depth_callback",
+                        "Dropping pair: |Δt|=%.6fs > %.6fs",
+                        dt,
+                        float(self.pair_max_dt_sec),
+                    )
+                    return
+            chosen_stamp = self._choose_cloud_stamp(
+                sem_pair_stamp, depth_stamp, "depth"
+            )
             stamp = self._apply_cloud_time_offset(chosen_stamp)
             self._log_stamp_debug(
                 "_depth_callback",
@@ -2121,6 +2855,7 @@ class ColoredPclNode:
                 "depth",
                 chosen_stamp,
                 stamp,
+                sem_pair_stamp=sem_pair_stamp,
             )
             target_T_depth = self.target_T_depth
             if target_T_depth is None:
@@ -2166,11 +2901,7 @@ class ColoredPclNode:
                 invalid_raw = (depth_raw == 0) | (
                     depth_raw == np.iinfo(np.uint16).max
                 )
-            confidence = (
-                image_to_numpy(conf_msg).astype(np.float32, copy=False)
-                if conf_msg
-                else None
-            )
+            confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
             if confidence is not None and self._undistort_active:
                 confidence = self._undistort_array(confidence, interpolation="linear")
 
@@ -2298,9 +3029,22 @@ class ColoredPclNode:
         with self._maybe_profile("lidar_callback"):
             sem_stamp = sem_msg.header.stamp
             lidar_stamp = lidar_msg.header.stamp
-            if not self._passes_pair_gate(sem_stamp, lidar_stamp, "_lidar_callback"):
-                return
-            chosen_stamp = self._choose_cloud_stamp(sem_stamp, lidar_stamp, "lidar")
+            sem_pair_stamp = self._apply_stamp_offset(
+                sem_stamp, self.semantic_time_offset_sec
+            )
+            if self.pair_max_dt_sec > 0.0:
+                dt = abs((sem_pair_stamp - lidar_stamp).to_sec())
+                if dt > self.pair_max_dt_sec:
+                    self._log.warn(
+                        "_lidar_callback",
+                        "Dropping pair: |Δt|=%.6fs > %.6fs",
+                        dt,
+                        float(self.pair_max_dt_sec),
+                    )
+                    return
+            chosen_stamp = self._choose_cloud_stamp(
+                sem_pair_stamp, lidar_stamp, "lidar"
+            )
             stamp = self._apply_cloud_time_offset(chosen_stamp)
             self._log_stamp_debug(
                 "_lidar_callback",
@@ -2309,6 +3053,7 @@ class ColoredPclNode:
                 "lidar",
                 chosen_stamp,
                 stamp,
+                sem_pair_stamp=sem_pair_stamp,
             )
             camera_T_lidar = self.camera_T_lidar
             target_T_lidar = self.target_T_lidar
@@ -2346,6 +3091,11 @@ class ColoredPclNode:
             include_rgb = bool(self.colorize_labels)
             rgb_values = None
             rgb_lut = None
+            debug_u = np.empty((0,), dtype=np.int32)
+            debug_v = np.empty((0,), dtype=np.int32)
+            debug_point_conf = None
+            semantic_debug_img = None
+            semantic_debug_type = self.semantic_input_type
 
             if self.semantic_input_type == "labels":
                 labels = self._parse_semantic_labels(sem_msg)
@@ -2361,11 +3111,7 @@ class ColoredPclNode:
                     )
                     self._warned_rgb_color_map = True
 
-            confidence = (
-                image_to_numpy(conf_msg).astype(np.float32, copy=False)
-                if conf_msg
-                else None
-            )
+            confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
             if self.downsample_factor > 1:
                 f = self.downsample_factor
                 if labels is not None:
@@ -2378,13 +3124,20 @@ class ColoredPclNode:
             else:
                 intrinsics = self.intrinsics
 
+            if self.semantic_input_type == "labels":
+                semantic_debug_img = labels
+            else:
+                semantic_debug_img = packed_rgb_to_triplets(packed_img)
+
             if self.lidar_deskew_enable:
                 points, t_raw = pointcloud2_to_xyz_t(
                     lidar_msg, time_field=self.lidar_time_field
                 )
+                points = self._apply_lidar_points_compat(points)
                 points = self._deskew_lidar_points(points, t_raw, lidar_stamp)
             else:
                 points = pointcloud2_to_xyz(lidar_msg)
+                points = self._apply_lidar_points_compat(points)
             debug_colors = None
             if self.debug_project_lidar and self.debug_projected_colorize == "depth":
                 points_cam_dbg = transform_points(camera_T_lidar, points)
@@ -2417,16 +3170,42 @@ class ColoredPclNode:
                     v = v[in_bounds]
 
                 labeled_points = points[inside]
+                if self.debug_publish_fov_points:
+                    self._publish_debug_fov_points(
+                        labeled_points,
+                        lidar_msg.header.frame_id,
+                        lidar_msg.header.stamp,
+                    )
                 if labeled_points.shape[0] == 0 and not self.include_unlabeled:
                     pcl = SemanticPointCloud(
                         np.empty((0, 3)), np.empty((0,), dtype=np.int64), None
                     )
                 else:
-                    labels_in = labels[v, u]
-                    if confidence is not None:
-                        conf_in = confidence[v, u].astype(np.float32, copy=False)
-                    else:
-                        conf_in = None
+                    labels_in, conf_in = sample_projected_label_patches(
+                        labels,
+                        u,
+                        v,
+                        confidence=confidence,
+                        patch_size=self.projection_patch_size,
+                    )
+                    keep_semantics = self._compute_projection_quality_mask(
+                        points_all=points,
+                        points_selected=labeled_points,
+                        intrinsics=intrinsics,
+                        camera_T_lidar=camera_T_lidar,
+                        image_shape=(h, w),
+                        u=u,
+                        v=v,
+                        point_confidence=conf_in,
+                    )
+                    labels_in = labels_in.astype(np.int64, copy=False)
+                    labels_in[~keep_semantics] = -1
+                    if conf_in is not None:
+                        conf_in = conf_in.astype(np.float32, copy=False)
+                        conf_in[~keep_semantics] = 0.0
+                    debug_u = u.astype(np.int32, copy=False)
+                    debug_v = v.astype(np.int32, copy=False)
+                    debug_point_conf = conf_in
                     points_target_labeled = transform_points(
                         target_T_lidar, labeled_points
                     )
@@ -2492,16 +3271,40 @@ class ColoredPclNode:
                     v = v[in_bounds]
 
                 points_in = points[inside]
-                if include_rgb:
-                    colors_packed = packed_img[v, u].astype(np.uint32, copy=False)
-                    rgb_values_in = colors_packed.astype("<u4", copy=False).view("<f4")
-                else:
-                    rgb_values_in = None
-                conf_in = (
-                    confidence[v, u].astype(np.float32, copy=False)
-                    if confidence is not None
-                    else None
+                if self.debug_publish_fov_points:
+                    self._publish_debug_fov_points(
+                        points_in,
+                        lidar_msg.header.frame_id,
+                        lidar_msg.header.stamp,
+                    )
+                rgb_values_in, conf_in = sample_projected_rgb_patches(
+                    packed_img,
+                    u,
+                    v,
+                    confidence=confidence,
+                    patch_size=self.projection_patch_size,
                 )
+                keep_rgb = self._compute_projection_quality_mask(
+                    points_all=points,
+                    points_selected=points_in,
+                    intrinsics=intrinsics,
+                    camera_T_lidar=camera_T_lidar,
+                    image_shape=(h, w),
+                    u=u,
+                    v=v,
+                    point_confidence=conf_in,
+                )
+                if conf_in is not None:
+                    conf_in = conf_in.astype(np.float32, copy=False)
+                    conf_in[~keep_rgb] = 0.0
+                if not include_rgb:
+                    rgb_values_in = None
+                elif rgb_values_in is not None:
+                    rgb_values_in = np.asarray(rgb_values_in, dtype=np.float32)
+                    rgb_values_in[~keep_rgb] = 0.0
+                debug_u = u.astype(np.int32, copy=False)
+                debug_v = v.astype(np.int32, copy=False)
+                debug_point_conf = conf_in
                 points_in_t = transform_points(target_T_lidar, points_in)
                 labels_in = np.full(points_in_t.shape[0], -1, dtype=np.int64)
 
@@ -2528,6 +3331,25 @@ class ColoredPclNode:
                     conf_all = conf_in
 
                 pcl = SemanticPointCloud(points_all, labels_all, conf_all)
+
+            if (
+                self.debug_range_view
+                and semantic_debug_img is not None
+                and debug_u.size > 0
+                and debug_v.size > 0
+            ):
+                self._publish_range_view_debug(
+                    sem_img=semantic_debug_img,
+                    sem_type=semantic_debug_type,
+                    points=points,
+                    intrinsics=intrinsics,
+                    camera_T_lidar=camera_T_lidar,
+                    image_shape=(h, w),
+                    u=debug_u,
+                    v=debug_v,
+                    point_confidence=debug_point_conf,
+                    header=sem_msg.header,
+                )
 
             if self.max_depth_m is not None and pcl.points_xyz.shape[0]:
                 ranges = np.linalg.norm(pcl.points_xyz, axis=1)

@@ -30,18 +30,6 @@ from __future__ import annotations
 import numpy as np
 
 
-_POINTFIELD_TO_DTYPE = {
-    1: np.dtype("<i1"),  # INT8
-    2: np.dtype("<u1"),  # UINT8
-    3: np.dtype("<i2"),  # INT16
-    4: np.dtype("<u2"),  # UINT16
-    5: np.dtype("<i4"),  # INT32
-    6: np.dtype("<u4"),  # UINT32
-    7: np.dtype("<f4"),  # FLOAT32
-    8: np.dtype("<f8"),  # FLOAT64
-}
-
-
 def image_to_numpy(msg):
     """Convert ``sensor_msgs/Image`` to a NumPy array without copies when possible.
 
@@ -92,42 +80,6 @@ def image_to_numpy(msg):
     return arr.reshape(msg.height, msg.width, channels)
 
 
-def _pointcloud_struct_view(msg, fields):
-    if msg.is_bigendian:
-        raise ValueError("big-endian PointCloud2 not supported in fast path")
-    available = {f.name: f for f in msg.fields}
-    names = []
-    formats = []
-    offsets = []
-    for alias, src_name in fields:
-        if src_name not in available:
-            raise ValueError(f"PointCloud2 missing field: {src_name}")
-        field = available[src_name]
-        if int(getattr(field, "count", 1)) not in (0, 1):
-            raise ValueError(
-                f"PointCloud2 field '{src_name}' has unsupported count={field.count}"
-            )
-        dtype = _POINTFIELD_TO_DTYPE.get(int(field.datatype))
-        if dtype is None:
-            raise ValueError(
-                f"PointCloud2 field '{src_name}' has unsupported datatype={field.datatype}"
-            )
-        names.append(alias)
-        formats.append(dtype)
-        offsets.append(int(field.offset))
-    struct_dtype = np.dtype(
-        {
-            "names": names,
-            "formats": formats,
-            "offsets": offsets,
-            "itemsize": int(msg.point_step),
-        }
-    )
-    return np.frombuffer(
-        msg.data, dtype=struct_dtype, count=int(msg.width) * int(msg.height)
-    )
-
-
 def pointcloud2_to_xyz(msg):
     """Extract XYZ points from ``sensor_msgs/PointCloud2`` into a float32 array.
 
@@ -140,8 +92,26 @@ def pointcloud2_to_xyz(msg):
     Raises:
         ValueError: If the message is big-endian or missing XYZ fields.
     """
-    cloud = _pointcloud_struct_view(msg, (("x", "x"), ("y", "y"), ("z", "z")))
-    points = np.empty((cloud.shape[0], 3), dtype=np.float32)
+    if msg.is_bigendian:
+        raise ValueError("big-endian PointCloud2 not supported in fast path")
+    field_offsets = {f.name: f.offset for f in msg.fields}
+    for needed in ("x", "y", "z"):
+        if needed not in field_offsets:
+            raise ValueError("PointCloud2 missing xyz fields")
+    dtype = np.dtype(
+        {
+            "names": ["x", "y", "z"],
+            "formats": ["<f4", "<f4", "<f4"],
+            "offsets": [
+                field_offsets["x"],
+                field_offsets["y"],
+                field_offsets["z"],
+            ],
+            "itemsize": msg.point_step,
+        }
+    )
+    cloud = np.frombuffer(msg.data, dtype=dtype, count=msg.width * msg.height)
+    points = np.zeros((cloud.shape[0], 3), dtype=np.float32)
     points[:, 0] = cloud["x"]
     points[:, 1] = cloud["y"]
     points[:, 2] = cloud["z"]
@@ -163,15 +133,31 @@ def pointcloud2_to_xyz_t(msg, *, time_field: str = "t"):
     Raises:
         ValueError: If the message is big-endian or missing required fields.
     """
-    cloud = _pointcloud_struct_view(
-        msg,
-        (("x", "x"), ("y", "y"), ("z", "z"), ("t", time_field)),
+    if msg.is_bigendian:
+        raise ValueError("big-endian PointCloud2 not supported in fast path")
+    field_offsets = {f.name: f.offset for f in msg.fields}
+    for needed in ("x", "y", "z", time_field):
+        if needed not in field_offsets:
+            raise ValueError(f"PointCloud2 missing field: {needed}")
+    dtype = np.dtype(
+        {
+            "names": ["x", "y", "z", "t"],
+            "formats": ["<f4", "<f4", "<f4", "<u4"],
+            "offsets": [
+                field_offsets["x"],
+                field_offsets["y"],
+                field_offsets["z"],
+                field_offsets[time_field],
+            ],
+            "itemsize": msg.point_step,
+        }
     )
-    points = np.empty((cloud.shape[0], 3), dtype=np.float32)
+    cloud = np.frombuffer(msg.data, dtype=dtype, count=msg.width * msg.height)
+    points = np.zeros((cloud.shape[0], 3), dtype=np.float32)
     points[:, 0] = cloud["x"]
     points[:, 1] = cloud["y"]
     points[:, 2] = cloud["z"]
-    t_raw = np.asarray(cloud["t"]).copy()
+    t_raw = cloud["t"].copy()
     return points, t_raw
 
 

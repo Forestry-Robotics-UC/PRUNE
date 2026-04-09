@@ -26,7 +26,7 @@
 """Single-frame semantic fusion pipelines."""
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -43,8 +43,205 @@ from entfac_fusion_core.utils.validation import (
     flatten_masked,
     require_homogeneous_transform,
 )
+from entfac_fusion_core.utils.semantics import packed_rgb_to_triplets
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _normalize_patch_size(patch_size: int) -> int:
+    patch_size = int(patch_size)
+    if patch_size < 1:
+        raise ValueError("patch_size must be >= 1")
+    if patch_size % 2 == 0:
+        raise ValueError("patch_size must be odd")
+    return patch_size
+
+
+def _gather_patch_samples(
+    image: np.ndarray,
+    u: np.ndarray,
+    v: np.ndarray,
+    *,
+    patch_size: int,
+    confidence: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+    image = np.asarray(image)
+    u = np.asarray(u, dtype=np.int32).reshape(-1)
+    v = np.asarray(v, dtype=np.int32).reshape(-1)
+    if u.shape != v.shape:
+        raise ValueError("u and v must have the same shape")
+    if image.ndim != 2:
+        raise ValueError(f"image must be 2D, got shape {image.shape}")
+    if confidence is not None:
+        confidence = np.asarray(confidence, dtype=np.float32)
+        if confidence.shape != image.shape:
+            raise ValueError("confidence must match image shape")
+
+    patch_size = _normalize_patch_size(patch_size)
+    radius = patch_size // 2
+    n = int(u.size)
+    k = int(patch_size * patch_size)
+    h, w = image.shape
+
+    samples = np.zeros((n, k), dtype=image.dtype)
+    valid = np.zeros((n, k), dtype=bool)
+    conf_samples = np.zeros((n, k), dtype=np.float32) if confidence is not None else None
+
+    idx = 0
+    for dy in range(-radius, radius + 1):
+        vv = v + int(dy)
+        valid_v = (vv >= 0) & (vv < h)
+        for dx in range(-radius, radius + 1):
+            uu = u + int(dx)
+            mask = valid_v & (uu >= 0) & (uu < w)
+            valid[:, idx] = mask
+            if np.any(mask):
+                samples[mask, idx] = image[vv[mask], uu[mask]]
+                if conf_samples is not None:
+                    conf_samples[mask, idx] = confidence[vv[mask], uu[mask]]
+            idx += 1
+
+    return samples, valid, conf_samples
+
+
+def sample_projected_label_patches(
+    labels_img: np.ndarray,
+    u: np.ndarray,
+    v: np.ndarray,
+    *,
+    confidence: Optional[np.ndarray] = None,
+    patch_size: int = 1,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sample label patches around projected pixels using a robust majority vote."""
+    labels_img = np.asarray(labels_img)
+    if labels_img.ndim != 2:
+        raise ValueError(f"labels_img must be 2D, got shape {labels_img.shape}")
+    if labels_img.dtype.kind not in ("i", "u"):
+        raise ValueError(f"labels_img must be integer, got dtype {labels_img.dtype}")
+
+    u = np.asarray(u, dtype=np.int32).reshape(-1)
+    v = np.asarray(v, dtype=np.int32).reshape(-1)
+    if u.shape != v.shape:
+        raise ValueError("u and v must have the same shape")
+
+    patch_size = _normalize_patch_size(patch_size)
+    if patch_size == 1:
+        labels = labels_img[v, u].astype(np.int64, copy=False)
+        if confidence is None:
+            patch_conf = np.ones(labels.shape[0], dtype=np.float32)
+        else:
+            patch_conf = np.clip(
+                np.asarray(confidence[v, u], dtype=np.float32),
+                0.0,
+                1.0,
+            )
+        return labels, patch_conf
+
+    samples, valid, conf_samples = _gather_patch_samples(
+        labels_img,
+        u,
+        v,
+        patch_size=patch_size,
+        confidence=confidence,
+    )
+
+    n = int(u.size)
+    labels_out = np.empty(n, dtype=np.int64)
+    conf_out = np.zeros(n, dtype=np.float32)
+    for i in range(n):
+        keep = valid[i]
+        vals = samples[i, keep].astype(np.int64, copy=False)
+        if vals.size == 0:
+            labels_out[i] = -1
+            conf_out[i] = 0.0
+            continue
+        if conf_samples is not None:
+            weights = np.clip(
+                conf_samples[i, keep].astype(np.float64, copy=False),
+                0.0,
+                None,
+            )
+            if not np.any(weights > 0.0):
+                weights = np.ones(vals.shape[0], dtype=np.float64)
+        else:
+            weights = np.ones(vals.shape[0], dtype=np.float64)
+
+        unique, inverse = np.unique(vals, return_inverse=True)
+        scores = np.bincount(
+            inverse,
+            weights=weights,
+            minlength=int(unique.size),
+        ).astype(np.float64, copy=False)
+        best = int(np.argmax(scores))
+        labels_out[i] = int(unique[best])
+        denom = float(np.sum(weights))
+        conf_out[i] = float(scores[best] / denom) if denom > 0.0 else 0.0
+
+    return labels_out, conf_out
+
+
+def sample_projected_rgb_patches(
+    packed_img: np.ndarray,
+    u: np.ndarray,
+    v: np.ndarray,
+    *,
+    confidence: Optional[np.ndarray] = None,
+    patch_size: int = 1,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sample RGB patches around projected pixels using a robust channel-wise median."""
+    packed_img = np.asarray(packed_img, dtype=np.uint32)
+    if packed_img.ndim != 2:
+        raise ValueError(f"packed_img must be 2D, got shape {packed_img.shape}")
+
+    u = np.asarray(u, dtype=np.int32).reshape(-1)
+    v = np.asarray(v, dtype=np.int32).reshape(-1)
+    if u.shape != v.shape:
+        raise ValueError("u and v must have the same shape")
+
+    patch_size = _normalize_patch_size(patch_size)
+    if patch_size == 1:
+        colors = packed_img[v, u].astype("<u4", copy=False)
+        rgb_values = colors.view("<f4")
+        if confidence is None:
+            patch_conf = np.ones(colors.shape[0], dtype=np.float32)
+        else:
+            patch_conf = np.clip(
+                np.asarray(confidence[v, u], dtype=np.float32),
+                0.0,
+                1.0,
+            )
+        return rgb_values, patch_conf
+
+    samples, valid, conf_samples = _gather_patch_samples(
+        packed_img,
+        u,
+        v,
+        patch_size=patch_size,
+        confidence=confidence,
+    )
+    rgb_triplets = packed_rgb_to_triplets(samples).astype(np.float32, copy=False)
+    masked = np.where(valid[:, :, None], rgb_triplets, np.nan)
+    median_rgb = np.nanmedian(masked, axis=1)
+    median_rgb = np.nan_to_num(median_rgb, nan=0.0)
+    rgb_u8 = np.clip(np.rint(median_rgb), 0.0, 255.0).astype(np.uint8, copy=False)
+    packed = (
+        (rgb_u8[:, 0].astype(np.uint32) << 16)
+        | (rgb_u8[:, 1].astype(np.uint32) << 8)
+        | rgb_u8[:, 2].astype(np.uint32)
+    )
+
+    diff = np.abs(rgb_triplets - median_rgb[:, None, :]).sum(axis=2)
+    diff = np.where(valid, diff / (255.0 * 3.0), 0.0)
+    counts = np.maximum(np.count_nonzero(valid, axis=1), 1)
+    patch_conf = 1.0 - np.clip(diff.sum(axis=1) / counts, 0.0, 1.0)
+    patch_conf = patch_conf.astype(np.float32, copy=False)
+
+    if conf_samples is not None:
+        counts_f = counts.astype(np.float32, copy=False)
+        conf_mean = conf_samples.sum(axis=1) / counts_f
+        patch_conf = patch_conf * np.clip(conf_mean, 0.0, 1.0)
+
+    return packed.astype("<u4", copy=False).view("<f4"), patch_conf
 
 
 def fuse_depth_semantics(
@@ -140,6 +337,7 @@ def fuse_lidar_semantics(
     camera_T_lidar: np.ndarray,
     target_T_lidar: np.ndarray,
     include_unlabeled: bool = False,
+    patch_size: int = 1,
 ) -> SemanticPointCloud:
     """Project LiDAR into an image, sample semantics, and emit a semantic point cloud.
 
@@ -157,6 +355,8 @@ def fuse_lidar_semantics(
         include_unlabeled: If true, also output points that project outside the
             image bounds with label ``-1`` and confidence ``0`` (if confidence is
             enabled). If false, drop them.
+        patch_size: Odd patch size for robust label sampling around each projected
+            pixel (1=center pixel, 3=3x3, 5=5x5, ...).
 
     Returns:
         SemanticPointCloud in the target frame:
@@ -216,12 +416,13 @@ def fuse_lidar_semantics(
         raise RuntimeError(
             "internal error: projected uv count does not match filtered point count"
         )
-    labels = semantic.labels[v, u]
-
-    if semantic.confidence is not None:
-        confidences = semantic.confidence[v, u].astype(np.float32, copy=False)
-    else:
-        confidences = None
+    labels, confidences = sample_projected_label_patches(
+        semantic.labels,
+        u,
+        v,
+        confidence=semantic.confidence,
+        patch_size=patch_size,
+    )
 
     points_target_labeled = transform_points(target_T_lidar, labeled_points)
 
