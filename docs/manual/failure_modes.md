@@ -5,6 +5,7 @@
 - **Stuck waiting for `~camera_info`**
   - Symptom: repeated timeout logs during init.
   - Likely causes: wrong topic name, bag not playing, or `/use_sim_time` without `/clock`.
+  - Alternative: set `~camera_info_txt` to load intrinsics from a calibration file and bypass topic wait.
 
 - **Auto-detect never resolves `~depth_input_topic`**
   - Symptom: periodic warning: “Waiting for … to appear to auto-detect mode”.

@@ -1,31 +1,128 @@
-services:
-  # sensor-fusion-ros:
-  #   image: ros-entfac:latest
-  #   container_name: entfac_sensor_fusion_ros
-  #   volumes:
-  #     - /mnt/bumble/entfac_utils/ENTFAC-Sensor-Fusion/:/home/ros/ws/src/entfac_fusion:rw
-  #     # TODO: update the host path to your bag directory
-  #     - /mnt/phd/datasets/choupal_v2:/bags:ro
-  #   working_dir: /home/ros/ws
-  #   tty: true
-  #   stdin_open: true
-  #   command: ["/bin/bash"]
+# Common ENTFAC ROS runtime settings (adapted from fruc_ros_utils compose style).
+x-entfac-common: &entfac-common
+  build:
+    context: .
+    dockerfile: Docker/ros.Dockerfile
+    args:
+      USER_UID: ${ENTFAC_UID:-1000}
+      USER_GID: ${ENTFAC_GID:-1000}
+  image: ${ENTFAC_IMAGE:-ros-entfac:latest}
+  user: "ros"
+  working_dir: /home/ros/ws
+  network_mode: host
+  stdin_open: true
+  tty: true
+  environment:
+    DISPLAY: ${DISPLAY:-:0}
+    XDG_RUNTIME_DIR: /tmp
+    QT_X11_NO_MITSHM: "1"
+    XAUTHORITY: /tmp/fruc.xauth
+  volumes:
+    - ${ENTFAC_SRC_PATH:-.}:/home/ros/ws/src/entfac_fusion:rw
+    - ${BAGS_PATH:-/mnt/t7_shield}:/bags:ro
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    - ${XAUTHORITY_PATH:-${XAUTHORITY:-${HOME}/.Xauthority}}:/tmp/fruc.xauth:rw
+    # Curt Mini URDF repository mounted outside catkin src to avoid ROS2 package mix.
+    - ${CURT_DESCRIPTION_PATH:-/home/forestsphere/work_utils/curt_dataset_recorder/ros2_ws/curt_description}:/opt/curt_description:ro
+  # Resource controls (override from shell/.env as needed).
+  cpus: ${ENTFAC_CPUS:-8.0}
+  mem_limit: ${ENTFAC_MEM_LIMIT:-12g}
+  memswap_limit: ${ENTFAC_MEMSWAP_LIMIT:-12g}
 
-  # Optional GUI container (RViz, rqt, etc) displayed on the host via X11.
-  # Host prereq (run once per session): `xhost +si:localuser:$(whoami)`
+x-curt-mini-launch-cmd: &curt-mini-launch-cmd
+  - /bin/bash
+  - -lc
+  - |
+    set -e
+    source /opt/ros/noetic/setup.bash
+    if ! rospack find xacro >/dev/null 2>&1; then
+      echo "[entfac] Missing ROS package 'xacro' in image."
+      echo "[entfac] Rebuild with: docker compose -f dataset-compose.yml build dataset-processing"
+      exit 2
+    fi
+    if [ ! -f /opt/curt_description/urdf/robot.urdf.xacro ]; then
+      echo "[entfac] Missing Curt URDF: /opt/curt_description/urdf/robot.urdf.xacro"
+      echo "[entfac] Set CURT_DESCRIPTION_PATH to the host curt_description root."
+      exit 3
+    fi
+    cd /home/ros/ws
+    if [ ! -f /home/ros/ws/devel/setup.bash ]; then
+      catkin_make
+    fi
+    source /home/ros/ws/devel/setup.bash
+    ENTFAC_PKG_PATH="$(rospack find entfac_fusion_ros 2>/dev/null || true)"
+    if [ -z "$${ENTFAC_PKG_PATH}" ]; then
+      echo "[entfac] Could not resolve ROS package 'entfac_fusion_ros' via rospack."
+      echo "[entfac] Check ENTFAC_SRC_PATH mount and catkin build output."
+      exit 4
+    fi
+    DATASET_CFG="$${ENTFAC_DATASET_CONFIG:-$${ENTFAC_PKG_PATH}/config/curt_mini.yaml}"
+    RVIZ_CFG="$${ENTFAC_RVIZ_CONFIG:-$${ENTFAC_PKG_PATH}/config/curtmini.rviz}"
+    CAM_INFO_TXT="$${ENTFAC_CAMERA_INFO_TXT:-$${ENTFAC_PKG_PATH}/config/curt_mini_realsense_camera_info.txt}"
+    if [ ! -f "$${DATASET_CFG}" ]; then
+      echo "[entfac] Missing dataset config: $${DATASET_CFG}"
+      exit 5
+    fi
+    if [ ! -f "$${RVIZ_CFG}" ]; then
+      echo "[entfac] Missing rviz config: $${RVIZ_CFG}"
+      exit 6
+    fi
+    if [ ! -f "$${CAM_INFO_TXT}" ]; then
+      echo "[entfac] Missing camera info txt: $${CAM_INFO_TXT}"
+      exit 7
+    fi
+    roslaunch entfac_fusion_ros curt_mini.launch \
+      use_sim_time:=true \
+      rviz:=true \
+      rviz_config:=$${RVIZ_CFG} \
+      urdf_path:=/opt/curt_description/urdf/robot.urdf.xacro \
+      dataset_config:=$${DATASET_CFG} \
+      camera_info_txt:=$${CAM_INFO_TXT} \
+      camera_frame:=camera_color_optical_frame
+
+services:
+  # Optional interactive shell with GUI forwarding (RViz/rqt).
+  # Host prereq per session: xhost +si:localuser:$(whoami)
   sensor-fusion-ros-gui:
-    image: ros-entfac:latest
+    <<: *entfac-common
     container_name: entfac_sensor_fusion_ros_gui
-    environment:
-      - DISPLAY=${DISPLAY}
-      - QT_X11_NO_MITSHM=1
-      - XAUTHORITY=/home/ros/.Xauthority
-    volumes:
-      - /mnt/bumble/entfac_utils/ENTFAC-Sensor-Fusion/:/home/ros/ws/src/entfac_fusion:rw
-      - /mnt/phd/datasets/choupal_v2:/bags:ro
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ${HOME}/.Xauthority:/home/ros/.Xauthority:ro
-    working_dir: /home/ros/ws
-    tty: true
-    stdin_open: true
     command: ["/bin/bash"]
+
+  # Curt Mini processing pipeline for iCNF bags mounted at /bags (default host path: /mnt/t7_shield).
+  # Launches Curt Mini stack with Curt RViz config + Curt URDF + RealSense txt calibration.
+  curt-mini-icnf:
+    <<: *entfac-common
+    container_name: entfac_curt_mini_icnf
+    command: *curt-mini-launch-cmd
+
+  # Compatibility name for dataset-compose workflows referenced in README/scripts.
+  dataset-processing:
+    <<: *entfac-common
+    container_name: entfac_dataset_processing
+    command: *curt-mini-launch-cmd
+
+  # Bag playback companion for Curt Mini iCNF runs.
+  curt-mini-icnf-bag-play:
+    <<: *entfac-common
+    container_name: entfac_curt_mini_icnf_bag_play
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -e
+        source /opt/ros/noetic/setup.bash
+        rosbag play --clock ${ICNF_BAG_GLOB:-/bags/*.bag}
+
+  # Optional NVIDIA variant (enable when host has NVIDIA container runtime).
+  curt-mini-icnf-gpu:
+    <<: *entfac-common
+    container_name: entfac_curt_mini_icnf_gpu
+    gpus: all
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: /tmp
+      QT_X11_NO_MITSHM: "1"
+      XAUTHORITY: /tmp/fruc.xauth
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,graphics}
+    command: *curt-mini-launch-cmd

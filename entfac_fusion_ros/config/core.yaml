@@ -4,7 +4,9 @@ semantic_input_type: "labels"  # "labels" or "rgb" (original colors)
 undistort_semantic: false      # undistort semantic image using CameraInfo distortion (lidar mode only)
 undistort_alpha: 0.0           # 0=crop to valid pixels, 1=keep all pixels
 confidence_topic: ""          # optional
-camera_info: "/camera/color/camera_info"
+camera_info: "/camera/color/camera_info"  # CameraInfo topic (used when camera_info_txt is empty)
+camera_info_txt: ""           # optional calibration file path; if set, intrinsics load from file
+camera_frame: ""              # optional fallback frame_id used with camera_info_txt when file has no frame_id
 depth_input_topic: "/camera/depth/image_rect_raw"  # geometry input: depth Image or LiDAR PointCloud2
 target_frame: "camera_color_optical_frame"
 include_unlabeled_pts: false

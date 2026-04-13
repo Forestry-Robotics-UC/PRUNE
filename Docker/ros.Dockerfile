@@ -25,6 +25,7 @@ RUN apt-get update && \
         ros-noetic-compressed-image-transport \
         ros-noetic-compressed-depth-image-transport \
         ros-noetic-robot-state-publisher \
+        ros-noetic-xacro \
         ros-noetic-rosbag \
         ros-noetic-roslaunch \
     && rm -rf /var/lib/apt/lists/*

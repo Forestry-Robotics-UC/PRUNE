@@ -42,14 +42,20 @@ Required:
     - ``~semantic_input_type=rgb``: 3/4-channel colors (e.g. ``rgb8``, ``bgr8``,
       ``rgba8``, ``bgra8``). Colors are passed through to the output when
       ``~colorize_labels`` is enabled.
-  - ``~camera_info`` (``sensor_msgs/CameraInfo``): provides intrinsics ``K`` and
-    the camera frame ID (used for LiDAR projection mode).
   - Geometry input:
     - Preferred: ``~depth_input_topic`` (auto-detected):
       - ``sensor_msgs/Image`` → depth mode
       - ``sensor_msgs/PointCloud2`` → lidar mode
 
 Optional:
+  - Camera intrinsics source:
+    - ``~camera_info`` (``sensor_msgs/CameraInfo``): topic providing intrinsics
+      ``K`` and camera frame ID.
+    - ``~camera_info_txt`` (``str``): calibration file path. Supports
+      ``K: [k00,...,k22]`` / ``camera_matrix.data: [...]`` or keyed
+      ``fx/fy/cx/cy`` fields.
+    - ``~camera_frame`` (``str``): fallback frame ID used with
+      ``~camera_info_txt`` when the file does not include one.
   - ``~confidence_topic`` (``sensor_msgs/Image``): confidence/probability aligned
     with semantic labels (single-channel numeric).
 
@@ -95,6 +101,7 @@ from __future__ import annotations
 import cProfile
 import io
 import pstats
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -126,6 +133,10 @@ from entfac_fusion_core.colored_pcl import (
 from entfac_fusion_core.colored_pcl.fusion import (
     sample_projected_label_patches,
     sample_projected_rgb_patches,
+)
+from entfac_fusion_core.calibration import (
+    CalibrationHealthSnapshot,
+    OnlineCalibrationHealth,
 )
 from entfac_fusion_core.projection.lidar_projection import project_points_to_image
 from entfac_fusion_core.transforms.se3 import transform_points
@@ -454,8 +465,20 @@ class ColoredPclNode:
             None,
             "CameraInfo topic providing intrinsics and camera frame_id (sensor_msgs/CameraInfo).",
         )
-        if not self.camera_info_topic:
-            raise ValueError("~camera_info is required")
+        self.camera_info_txt = self._get_param_str(
+            "~camera_info_txt",
+            "",
+            "Optional path to a camera calibration text file. When set, intrinsics are loaded from file and ~camera_info topic is optional.",
+            allow_empty=True,
+        )
+        self.camera_frame_param = self._get_param_str(
+            "~camera_frame",
+            "",
+            "Optional camera frame override used when ~camera_info_txt does not include frame_id.",
+            allow_empty=True,
+        )
+        if not self.camera_info_topic and not self.camera_info_txt:
+            raise ValueError("Either ~camera_info or ~camera_info_txt is required")
 
         self.depth_input_topic = self._get_param_str(
             "~depth_input_topic",
@@ -649,6 +672,126 @@ class ColoredPclNode:
             False,
             "If true (lidar mode), publish only the LiDAR points that passed the camera FOV test as a debug PointCloud2 in the LiDAR frame.",
         )
+        self.online_calibration_enable = self._get_param_bool(
+            "~online_calibration_enable",
+            False,
+            "Enable lightweight online LiDAR-camera misalignment estimation with health/uncertainty and small projection correction (classical, no neural models).",
+        )
+        self.online_calibration_every_n_frames = self._get_param_int(
+            "~online_calibration_every_n_frames",
+            10,
+            "Run online calibration update every N lidar callbacks (>=1).",
+        )
+        if self.online_calibration_every_n_frames < 1:
+            raise ValueError("~online_calibration_every_n_frames must be >= 1")
+        self.online_calibration_max_points = self._get_param_int(
+            "~online_calibration_max_points",
+            8000,
+            "Max number of LiDAR points used by online calibration updates (uniform stride subsampling above this).",
+        )
+        if self.online_calibration_max_points < 200:
+            raise ValueError("~online_calibration_max_points must be >= 200")
+        self.online_calibration_edge_threshold = self._get_param_float(
+            "~online_calibration_edge_threshold",
+            0.20,
+            "Edge threshold in [0,1] used for observability density checks on semantic/depth edge maps.",
+        )
+        if not 0.0 <= self.online_calibration_edge_threshold <= 1.0:
+            raise ValueError("~online_calibration_edge_threshold must be in [0, 1]")
+        self.online_calibration_step_deg = self._get_param_float(
+            "~online_calibration_step_deg",
+            0.20,
+            "Finite-difference perturbation step in degrees for rotational misalignment estimation.",
+        )
+        if self.online_calibration_step_deg <= 0.0:
+            raise ValueError("~online_calibration_step_deg must be > 0")
+        self.online_calibration_learning_rate = self._get_param_float(
+            "~online_calibration_learning_rate",
+            0.25,
+            "Update gain for online rotational correction (smaller is more conservative).",
+        )
+        if self.online_calibration_learning_rate <= 0.0:
+            raise ValueError("~online_calibration_learning_rate must be > 0")
+        self.online_calibration_max_correction_deg = self._get_param_float(
+            "~online_calibration_max_correction_deg",
+            3.0,
+            "Clamp for each correction angle component (roll/pitch/yaw) in degrees.",
+        )
+        if self.online_calibration_max_correction_deg <= 0.0:
+            raise ValueError("~online_calibration_max_correction_deg must be > 0")
+        self.online_calibration_min_observability = self._get_param_float(
+            "~online_calibration_min_observability",
+            0.15,
+            "Minimum observability required before correction updates are applied.",
+        )
+        if not 0.0 <= self.online_calibration_min_observability <= 1.0:
+            raise ValueError("~online_calibration_min_observability must be in [0, 1]")
+        self.online_calibration_min_fov_points = self._get_param_int(
+            "~online_calibration_min_fov_points",
+            500,
+            "Minimum in-FOV LiDAR points required by the online calibration update.",
+        )
+        if self.online_calibration_min_fov_points < 1:
+            raise ValueError("~online_calibration_min_fov_points must be >= 1")
+        self.online_calibration_min_sem_edge_density = self._get_param_float(
+            "~online_calibration_min_sem_edge_density",
+            0.010,
+            "Minimum semantic edge density expected for well-observable frames.",
+        )
+        if self.online_calibration_min_sem_edge_density <= 0.0:
+            raise ValueError("~online_calibration_min_sem_edge_density must be > 0")
+        self.online_calibration_min_depth_edge_density = self._get_param_float(
+            "~online_calibration_min_depth_edge_density",
+            0.010,
+            "Minimum LiDAR depth-edge density expected for well-observable frames.",
+        )
+        if self.online_calibration_min_depth_edge_density <= 0.0:
+            raise ValueError("~online_calibration_min_depth_edge_density must be > 0")
+        self.online_calibration_health_ema_alpha = self._get_param_float(
+            "~online_calibration_health_ema_alpha",
+            0.15,
+            "EMA alpha for calibration health score smoothing.",
+        )
+        if not 0.0 < self.online_calibration_health_ema_alpha <= 1.0:
+            raise ValueError("~online_calibration_health_ema_alpha must be in (0, 1]")
+        self.online_calibration_health_std_window = self._get_param_int(
+            "~online_calibration_health_std_window",
+            40,
+            "Sliding window size used to estimate alignment-score stability.",
+        )
+        if self.online_calibration_health_std_window < 2:
+            raise ValueError("~online_calibration_health_std_window must be >= 2")
+        self.online_calibration_health_std_scale = self._get_param_float(
+            "~online_calibration_health_std_scale",
+            0.08,
+            "Scale that maps alignment-score std into stability confidence.",
+        )
+        if self.online_calibration_health_std_scale <= 0.0:
+            raise ValueError("~online_calibration_health_std_scale must be > 0")
+        self.online_calibration_health_score_center = self._get_param_float(
+            "~online_calibration_health_score_center",
+            0.25,
+            "Alignment-score midpoint used by the health logistic transfer.",
+        )
+        self.online_calibration_health_score_scale = self._get_param_float(
+            "~online_calibration_health_score_scale",
+            0.10,
+            "Alignment-score scale used by the health logistic transfer.",
+        )
+        if self.online_calibration_health_score_scale <= 0.0:
+            raise ValueError("~online_calibration_health_score_scale must be > 0")
+        self.online_calibration_log_period_sec = self._get_param_float(
+            "~online_calibration_log_period_sec",
+            2.0,
+            "Minimum seconds between online calibration status logs.",
+        )
+        if self.online_calibration_log_period_sec < 0.0:
+            raise ValueError("~online_calibration_log_period_sec must be >= 0")
+        self._online_calibration_requested = bool(self.online_calibration_enable)
+        self._online_calibration_status = (
+            "requested" if self._online_calibration_requested else "disabled"
+        )
+
         # Fixed debug projection settings to avoid extra parameters.
         self.debug_projected_topic = "/debug/lidar_projection"
         self.debug_projected_colorize = "depth"
@@ -659,6 +802,8 @@ class ColoredPclNode:
         self.debug_reprojection_heatmap_topic = "/debug/reprojection_heatmap"
         self.debug_alignment_score_topic = "/debug/alignment_score"
         self.debug_fov_points_topic = "/debug/lidar_points_in_fov"
+        self.debug_calibration_health_topic = "/debug/calibration_health"
+        self.debug_calibration_uncertainty_topic = "/debug/calibration_uncertainty"
 
         self.static_target_T_depth = self._get_matrix_param(
             "~static_target_T_depth",
@@ -691,41 +836,87 @@ class ColoredPclNode:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self._log.debug(
-            "__init__", "Waiting for CameraInfo on topic=%s", self.camera_info_topic
-        )
-        cam_info = None
-        wait_start = time.time()
-        next_warn = wait_start + 5.0
-        while cam_info is None and not rospy.is_shutdown():
-            cam_info = self._wait_for_msg(
-                self.camera_info_topic,
-                CameraInfo,
-                timeout=1.0,
-                warn_on_timeout=False,
-            )
-            if cam_info is None and time.time() >= next_warn:
-                self._log.warn(
+        self._camera_info_source = ""
+        if self.camera_info_txt:
+            (
+                intrinsics,
+                frame_id_from_file,
+                distortion,
+                distortion_model,
+                camera_info_size,
+                resolved_path,
+            ) = self._load_camera_info_txt(self.camera_info_txt)
+            self.intrinsics = intrinsics
+            self.intrinsics_raw = self.intrinsics.copy()
+            self._camera_distortion = distortion
+            self._camera_distortion_model = distortion_model
+            self._camera_info_size = camera_info_size
+            self.camera_frame = frame_id_from_file or self.camera_frame_param
+            if not self.camera_frame:
+                raise ValueError(
+                    "~camera_info_txt requires a camera frame. Add frame_id/camera_frame in the file or set ~camera_frame."
+                )
+            self._camera_info_source = f"txt:{resolved_path}"
+            if self.camera_info_topic:
+                self._log.info(
                     "__init__",
-                    "Waiting for CameraInfo on %s (check topic name and bag/driver)",
+                    "Using camera intrinsics from ~camera_info_txt=%s (topic ~camera_info=%s is ignored for intrinsics).",
+                    resolved_path,
                     self.camera_info_topic,
                 )
-                next_warn = time.time() + 5.0
-        if cam_info is None:
-            raise rospy.ROSInterruptException("Shutdown while waiting for CameraInfo")
-        self.intrinsics = np.asarray(cam_info.K, dtype=float).reshape(3, 3)
-        self.camera_frame = cam_info.header.frame_id
-        self._log.debug(
-            "__init__",
-            "CameraInfo received: frame_id=%s stamp=%.6f",
-            self.camera_frame,
-            cam_info.header.stamp.to_sec(),
-        )
-        self._log.debug("__init__", "Intrinsics K=\n%s", format_matrix(self.intrinsics))
-        self.intrinsics_raw = self.intrinsics.copy()
-        self._camera_distortion = np.asarray(cam_info.D, dtype=float) if cam_info.D else None
-        self._camera_distortion_model = (cam_info.distortion_model or "").strip().lower()
-        self._camera_info_size = (int(cam_info.height), int(cam_info.width))
+            self._log.info(
+                "__init__",
+                "Camera intrinsics loaded from file: frame_id=%s size=%dx%d",
+                self.camera_frame,
+                int(self._camera_info_size[1]),
+                int(self._camera_info_size[0]),
+            )
+            self._log.debug(
+                "__init__",
+                "Intrinsics K (file)=\n%s",
+                format_matrix(self.intrinsics),
+            )
+        else:
+            self._log.debug(
+                "__init__", "Waiting for CameraInfo on topic=%s", self.camera_info_topic
+            )
+            cam_info = None
+            wait_start = time.time()
+            next_warn = wait_start + 5.0
+            while cam_info is None and not rospy.is_shutdown():
+                cam_info = self._wait_for_msg(
+                    self.camera_info_topic,
+                    CameraInfo,
+                    timeout=1.0,
+                    warn_on_timeout=False,
+                )
+                if cam_info is None and time.time() >= next_warn:
+                    self._log.warn(
+                        "__init__",
+                        "Waiting for CameraInfo on %s (check topic name and bag/driver)",
+                        self.camera_info_topic,
+                    )
+                    next_warn = time.time() + 5.0
+            if cam_info is None:
+                raise rospy.ROSInterruptException("Shutdown while waiting for CameraInfo")
+            self.intrinsics = np.asarray(cam_info.K, dtype=float).reshape(3, 3)
+            self.camera_frame = cam_info.header.frame_id
+            self._log.debug(
+                "__init__",
+                "CameraInfo received: frame_id=%s stamp=%.6f",
+                self.camera_frame,
+                cam_info.header.stamp.to_sec(),
+            )
+            self._log.debug("__init__", "Intrinsics K=\n%s", format_matrix(self.intrinsics))
+            self.intrinsics_raw = self.intrinsics.copy()
+            self._camera_distortion = (
+                np.asarray(cam_info.D, dtype=float) if cam_info.D else None
+            )
+            self._camera_distortion_model = (
+                (cam_info.distortion_model or "").strip().lower()
+            )
+            self._camera_info_size = (int(cam_info.height), int(cam_info.width))
+            self._camera_info_source = f"topic:{self.camera_info_topic}"
 
         self._output_topic = rospy.resolve_name("semantic_pointcloud")
         self.pcl_pub = rospy.Publisher("semantic_pointcloud", PointCloud2, queue_size=1)
@@ -756,6 +947,15 @@ class ColoredPclNode:
             self._debug_fov_points_pub = rospy.Publisher(
                 self.debug_fov_points_topic, PointCloud2, queue_size=1
             )
+        self._debug_calibration_health_pub = None
+        self._debug_calibration_uncertainty_pub = None
+        if self.online_calibration_enable:
+            self._debug_calibration_health_pub = rospy.Publisher(
+                self.debug_calibration_health_topic, Float32, queue_size=1
+            )
+            self._debug_calibration_uncertainty_pub = rospy.Publisher(
+                self.debug_calibration_uncertainty_topic, Float32, queue_size=1
+            )
 
         self.target_T_depth = None
         self.camera_T_lidar = None
@@ -767,6 +967,31 @@ class ColoredPclNode:
         self._mode_detail = "forced via ~mode" if self._mode_source == "forced" else ""
         if self.mode not in ("depth", "lidar"):
             self.mode = self._detect_mode()
+        self._online_calibration_health = OnlineCalibrationHealth(
+            ema_alpha=float(self.online_calibration_health_ema_alpha),
+            std_window=int(self.online_calibration_health_std_window),
+            std_scale=float(self.online_calibration_health_std_scale),
+            score_center=float(self.online_calibration_health_score_center),
+            score_scale=float(self.online_calibration_health_score_scale),
+            min_observability=float(self.online_calibration_min_observability),
+        )
+        self._online_calibration_rpy_rad = np.zeros(3, dtype=np.float64)
+        self._online_calibration_correction_uncertainty = 1.0
+        self._online_calibration_update_counter = 0
+        self._online_calibration_last_snapshot: Optional[CalibrationHealthSnapshot] = None
+        self._online_calibration_last_log_at = 0.0
+        if self.online_calibration_enable and self.mode != "lidar":
+            self._log.warn(
+                "__init__",
+                "online_calibration_enable=true requires lidar mode; disabling because mode=%s",
+                self.mode,
+            )
+            self.online_calibration_enable = False
+            self._online_calibration_status = f"disabled (mode={self.mode})"
+        elif self.online_calibration_enable:
+            self._online_calibration_status = "active"
+        else:
+            self._online_calibration_status = "disabled"
         self._resolve_cloud_stamp_source()
         self._prime_transforms()
         self._undistort_map1 = None
@@ -961,6 +1186,131 @@ class ColoredPclNode:
         self._record_param(name, color_map, source, description)
         return color_map
 
+    def _load_camera_info_txt(
+        self, txt_path: str
+    ) -> Tuple[np.ndarray, str, Optional[np.ndarray], str, Tuple[int, int], str]:
+        path = Path(str(txt_path)).expanduser()
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        else:
+            path = path.resolve()
+        if not path.is_file():
+            raise ValueError(f"~camera_info_txt file not found: {path}")
+
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        number_pat = r"[-+]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][-+]?\d+)?"
+
+        def _extract_list(keys: Tuple[str, ...]) -> Optional[list]:
+            for key in keys:
+                pattern = (
+                    rf"(?is)(?:^|[\r\n])\s*{re.escape(key)}\s*[:=]\s*\[([^\]]+)\]"
+                )
+                match = re.search(pattern, text)
+                if match:
+                    vals = [float(v) for v in re.findall(number_pat, match.group(1))]
+                    if vals:
+                        return vals
+            return None
+
+        def _extract_scalar(keys: Tuple[str, ...]) -> str:
+            for key in keys:
+                pattern = (
+                    rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*"
+                    r"['\"]?([^'\"\s#]+)['\"]?\s*(?:#.*)?$"
+                )
+                match = re.search(pattern, text)
+                if match:
+                    return match.group(1).strip()
+            return ""
+
+        def _extract_float(keys: Tuple[str, ...]) -> Optional[float]:
+            for key in keys:
+                pattern = (
+                    rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*"
+                    rf"({number_pat})\s*(?:#.*)?$"
+                )
+                match = re.search(pattern, text)
+                if match:
+                    return float(match.group(1))
+            return None
+
+        def _extract_int(keys: Tuple[str, ...]) -> int:
+            for key in keys:
+                pattern = rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*([-+]?\d+)\s*(?:#.*)?$"
+                match = re.search(pattern, text)
+                if match:
+                    return int(match.group(1))
+            return 0
+
+        k_vals = _extract_list(("K", "k", "intrinsics", "camera_matrix_data"))
+        if k_vals is None:
+            match = re.search(
+                r"(?is)camera_matrix\s*:.*?data\s*:\s*\[([^\]]+)\]",
+                text,
+            )
+            if match:
+                k_vals = [float(v) for v in re.findall(number_pat, match.group(1))]
+        if not k_vals:
+            fx = _extract_float(("fx",))
+            fy = _extract_float(("fy",))
+            cx = _extract_float(("cx",))
+            cy = _extract_float(("cy",))
+            if None not in (fx, fy, cx, cy):
+                k_vals = [
+                    float(fx),
+                    0.0,
+                    float(cx),
+                    0.0,
+                    float(fy),
+                    float(cy),
+                    0.0,
+                    0.0,
+                    1.0,
+                ]
+        if not k_vals:
+            p_vals = _extract_list(("P", "projection_matrix_data"))
+            if p_vals is None:
+                match = re.search(
+                    r"(?is)projection_matrix\s*:.*?data\s*:\s*\[([^\]]+)\]",
+                    text,
+                )
+                if match:
+                    p_vals = [float(v) for v in re.findall(number_pat, match.group(1))]
+            if p_vals and len(p_vals) >= 12:
+                p = np.asarray(p_vals[:12], dtype=float).reshape(3, 4)
+                k_vals = p[:, :3].reshape(-1).tolist()
+        if not k_vals:
+            all_numbers = [float(v) for v in re.findall(number_pat, text)]
+            if len(all_numbers) == 9:
+                k_vals = all_numbers
+        if not k_vals or len(k_vals) < 9:
+            raise ValueError(
+                "~camera_info_txt does not contain intrinsics K. Expected "
+                "K/camera_matrix.data list or fx/fy/cx/cy scalars."
+            )
+
+        intrinsics = np.asarray(k_vals[:9], dtype=float).reshape(3, 3)
+        frame_id = _extract_scalar(("frame_id", "camera_frame", "camera_frame_id"))
+        distortion_model = _extract_scalar(("distortion_model",)).lower()
+        d_vals = _extract_list(("D", "distortion", "distortion_coefficients_data"))
+        if d_vals is None:
+            match = re.search(
+                r"(?is)distortion_coefficients\s*:.*?data\s*:\s*\[([^\]]+)\]",
+                text,
+            )
+            if match:
+                d_vals = [float(v) for v in re.findall(number_pat, match.group(1))]
+        distortion = np.asarray(d_vals, dtype=float).reshape(-1) if d_vals else None
+        width = max(0, int(_extract_int(("image_width", "width"))))
+        height = max(0, int(_extract_int(("image_height", "height"))))
+        if width == 0 or height == 0:
+            self._log.warn(
+                "_load_camera_info_txt",
+                "camera_info_txt=%s has no valid image width/height. Undistort may be disabled.",
+                path,
+            )
+        return intrinsics, frame_id, distortion, distortion_model, (height, width), str(path)
+
     # ----------------------------
     # Startup report
     # ----------------------------
@@ -1087,11 +1437,12 @@ class ColoredPclNode:
     def _log_correction_statuses(self) -> None:
         self._log.info(
             "_log_correction_statuses",
-            "correction status: undistort=%s rolling_shutter=%s lidar_deskew=%s lidar_points_compat=%s",
+            "correction status: undistort=%s rolling_shutter=%s lidar_deskew=%s lidar_points_compat=%s online_calibration=%s",
             self._undistort_status,
             self._rolling_shutter_status,
             self._lidar_deskew_status,
             self._compat_lidar_points_status,
+            self._online_calibration_status,
         )
 
     # ----------------------------
@@ -2480,6 +2831,281 @@ class ColoredPclNode:
             return 0.0
         return float(np.sum(sem * dep) / denom)
 
+    @staticmethod
+    def _rotation_from_rpy(roll: float, pitch: float, yaw: float) -> np.ndarray:
+        cr, sr = np.cos(roll), np.sin(roll)
+        cp, sp = np.cos(pitch), np.sin(pitch)
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        rx = np.array(
+            [[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]],
+            dtype=np.float64,
+        )
+        ry = np.array(
+            [[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]],
+            dtype=np.float64,
+        )
+        rz = np.array(
+            [[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        return rz @ ry @ rx
+
+    def _compose_corrected_camera_T_lidar(
+        self,
+        camera_T_lidar: np.ndarray,
+        *,
+        correction_rpy_rad: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        if correction_rpy_rad is None:
+            correction_rpy_rad = self._online_calibration_rpy_rad
+        correction_rpy_rad = np.asarray(correction_rpy_rad, dtype=np.float64).reshape(3)
+        delta = np.eye(4, dtype=np.float64)
+        delta[:3, :3] = self._rotation_from_rpy(
+            float(correction_rpy_rad[0]),
+            float(correction_rpy_rad[1]),
+            float(correction_rpy_rad[2]),
+        )
+        corrected = delta @ np.asarray(camera_T_lidar, dtype=np.float64)
+        return require_homogeneous_transform(corrected)
+
+    def _evaluate_alignment_for_transform(
+        self,
+        *,
+        points: np.ndarray,
+        sem_edges: np.ndarray,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_shape: Tuple[int, int],
+    ) -> Tuple[float, np.ndarray]:
+        depth_map = self._rasterize_lidar_depth_map(
+            points, intrinsics, camera_T_lidar, image_shape
+        )
+        depth_edges = self._depth_map_to_edge_map(depth_map)
+        score = self._edge_alignment_score(sem_edges, depth_edges)
+        return float(score), depth_edges
+
+    def _compute_observability_score(
+        self,
+        *,
+        in_fov_count: int,
+        total_count: int,
+        sem_edges: np.ndarray,
+        depth_edges: np.ndarray,
+    ) -> float:
+        """Compute a bounded observability proxy for online calibration.
+
+        The score combines:
+        - in-FOV LiDAR coverage ratio,
+        - semantic edge density,
+        - LiDAR depth-edge density.
+
+        The three terms are normalized by minimum expected densities and fused via
+        geometric mean, yielding a conservative ``[0, 1]`` observability scalar.
+        """
+        if total_count <= 0:
+            return 0.0
+        total = float(total_count)
+        fov_ratio = float(np.clip(float(in_fov_count) / total, 0.0, 1.0))
+        edge_thr = float(self.online_calibration_edge_threshold)
+        sem_density = float(np.mean(np.asarray(sem_edges, dtype=np.float32) >= edge_thr))
+        depth_density = float(
+            np.mean(np.asarray(depth_edges, dtype=np.float32) >= edge_thr)
+        )
+        sem_term = float(
+            np.clip(
+                sem_density / float(self.online_calibration_min_sem_edge_density),
+                0.0,
+                1.0,
+            )
+        )
+        depth_term = float(
+            np.clip(
+                depth_density / float(self.online_calibration_min_depth_edge_density),
+                0.0,
+                1.0,
+            )
+        )
+        observability = float(np.clip((fov_ratio * sem_term * depth_term) ** (1.0 / 3.0), 0.0, 1.0))
+        return observability
+
+    def _publish_online_calibration_debug(
+        self, snapshot: CalibrationHealthSnapshot
+    ) -> None:
+        if self._debug_calibration_health_pub is not None:
+            self._debug_calibration_health_pub.publish(
+                Float32(data=float(snapshot.health))
+            )
+        if self._debug_calibration_uncertainty_pub is not None:
+            self._debug_calibration_uncertainty_pub.publish(
+                Float32(data=float(snapshot.uncertainty))
+            )
+
+    def _maybe_update_online_calibration(
+        self,
+        *,
+        points: np.ndarray,
+        sem_img: np.ndarray,
+        sem_type: str,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_shape: Tuple[int, int],
+    ) -> np.ndarray:
+        """Run low-rate rotational misalignment update and return corrected extrinsics.
+
+        Pipeline
+        --------
+        1. Apply current correction estimate to obtain a corrected camera_T_lidar.
+        2. Every ``~online_calibration_every_n_frames``:
+           - build semantic/depth edge maps,
+           - evaluate alignment score (cosine-like normalized correlation),
+           - estimate observability and gate updates in weak scenes.
+        3. If observable:
+           - estimate score gradient and curvature per axis via central finite
+             differences around roll/pitch/yaw perturbations,
+           - apply bounded update with conservative clamp
+             (``~online_calibration_max_correction_deg``).
+        4. Update health/uncertainty estimator and publish debug diagnostics.
+
+        Notes
+        -----
+        - Correction is rotation-only by design (KISS for online edge compute).
+        - No deep models or learned priors are used.
+        - The method is intentionally conservative to avoid unstable drift.
+        """
+        if not self.online_calibration_enable:
+            return camera_T_lidar
+
+        self._online_calibration_update_counter += 1
+        corrected = self._compose_corrected_camera_T_lidar(camera_T_lidar)
+        every_n = int(self.online_calibration_every_n_frames)
+        if self._online_calibration_update_counter % every_n != 0:
+            return corrected
+
+        points = np.asarray(points, dtype=np.float32)
+        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+            self._online_calibration_status = "active (no lidar points)"
+            return corrected
+
+        max_points = int(self.online_calibration_max_points)
+        if points.shape[0] > max_points:
+            stride = max(1, int(np.ceil(points.shape[0] / float(max_points))))
+            points_eval = points[::stride]
+        else:
+            points_eval = points
+        if points_eval.shape[0] < 3:
+            self._online_calibration_status = "active (insufficient points)"
+            return corrected
+
+        sem_edges = self._semantic_edge_map(sem_img, sem_type)
+        score0, depth_edges = self._evaluate_alignment_for_transform(
+            points=points_eval,
+            sem_edges=sem_edges,
+            intrinsics=intrinsics,
+            camera_T_lidar=corrected,
+            image_shape=image_shape,
+        )
+        w = int(image_shape[1])
+        h = int(image_shape[0])
+        _, inside = project_points_to_image(
+            points_eval, intrinsics, corrected, (w, h)
+        )
+        in_fov_count = int(np.count_nonzero(inside))
+        observability = self._compute_observability_score(
+            in_fov_count=in_fov_count,
+            total_count=int(points_eval.shape[0]),
+            sem_edges=sem_edges,
+            depth_edges=depth_edges,
+        )
+
+        min_obs = float(self.online_calibration_min_observability)
+        min_fov_points = int(self.online_calibration_min_fov_points)
+        correction_uncertainty = float(self._online_calibration_correction_uncertainty)
+        if in_fov_count >= min_fov_points and observability >= min_obs:
+            delta = np.asarray(self._online_calibration_rpy_rad, dtype=np.float64).copy()
+            step = float(np.deg2rad(self.online_calibration_step_deg))
+            lr = float(self.online_calibration_learning_rate)
+            max_corr = float(np.deg2rad(self.online_calibration_max_correction_deg))
+            axis_sigma = np.full(3, max_corr, dtype=np.float64)
+
+            for axis in range(3):
+                plus = delta.copy()
+                minus = delta.copy()
+                plus[axis] += step
+                minus[axis] -= step
+                score_plus, _ = self._evaluate_alignment_for_transform(
+                    points=points_eval,
+                    sem_edges=sem_edges,
+                    intrinsics=intrinsics,
+                    camera_T_lidar=self._compose_corrected_camera_T_lidar(
+                        camera_T_lidar, correction_rpy_rad=plus
+                    ),
+                    image_shape=image_shape,
+                )
+                score_minus, _ = self._evaluate_alignment_for_transform(
+                    points=points_eval,
+                    sem_edges=sem_edges,
+                    intrinsics=intrinsics,
+                    camera_T_lidar=self._compose_corrected_camera_T_lidar(
+                        camera_T_lidar, correction_rpy_rad=minus
+                    ),
+                    image_shape=image_shape,
+                )
+                grad = float((score_plus - score_minus) / (2.0 * step))
+                hess = float((score_plus - (2.0 * score0) + score_minus) / (step * step))
+                if np.isfinite(hess) and hess < -1e-6:
+                    update = lr * grad / (abs(hess) + 1e-6)
+                    axis_sigma[axis] = float(np.sqrt(1.0 / (abs(hess) + 1e-6)))
+                else:
+                    update = lr * grad
+                    axis_sigma[axis] = max_corr
+                if np.isfinite(update):
+                    delta[axis] += float(update)
+
+            delta = np.clip(delta, -max_corr, max_corr)
+            self._online_calibration_rpy_rad = delta.astype(np.float64, copy=False)
+            corrected = self._compose_corrected_camera_T_lidar(camera_T_lidar)
+            correction_uncertainty = float(
+                np.clip(np.mean(axis_sigma) / (max_corr + 1e-6), 0.0, 1.0)
+            )
+            self._online_calibration_status = "active"
+        else:
+            self._online_calibration_status = "active (observability-gated)"
+            correction_uncertainty = float(
+                np.clip(correction_uncertainty + 0.05, 0.0, 1.0)
+            )
+
+        self._online_calibration_correction_uncertainty = correction_uncertainty
+        snapshot = self._online_calibration_health.update(
+            score_raw=float(score0),
+            observability=float(observability),
+            correction_rpy_rad=self._online_calibration_rpy_rad,
+            correction_uncertainty=float(self._online_calibration_correction_uncertainty),
+        )
+        self._online_calibration_last_snapshot = snapshot
+        self._publish_online_calibration_debug(snapshot)
+
+        now = time.time()
+        if self.online_calibration_log_period_sec == 0.0:
+            return corrected
+        if now - self._online_calibration_last_log_at >= self.online_calibration_log_period_sec:
+            self._log.info(
+                "_maybe_update_online_calibration",
+                "online calibration: health=%.3f uncertainty=%.3f score=%.3f score_ema=%.3f obs=%.3f corr_deg=[%.3f %.3f %.3f] in_fov=%d/%d status=%s",
+                float(snapshot.health),
+                float(snapshot.uncertainty),
+                float(snapshot.score_raw),
+                float(snapshot.score_ema),
+                float(snapshot.observability),
+                float(snapshot.correction_roll_deg),
+                float(snapshot.correction_pitch_deg),
+                float(snapshot.correction_yaw_deg),
+                int(in_fov_count),
+                int(points_eval.shape[0]),
+                self._online_calibration_status,
+            )
+            self._online_calibration_last_log_at = now
+        return corrected
+
     def _publish_range_view_debug(
         self,
         *,
@@ -2709,7 +3335,9 @@ class ColoredPclNode:
             ("semantic_topic", self.semantic_topic),
             ("semantic_type", self.semantic_input_type),
             ("confidence_topic", self.conf_topic or "-"),
-            ("camera_info", self.camera_info_topic),
+            ("camera_info_source", self._camera_info_source or "-"),
+            ("camera_info", self.camera_info_topic or "-"),
+            ("camera_info_txt", self.camera_info_txt or "-"),
             ("depth_input_topic", self.depth_input_topic or "-"),
             ("downsample", str(int(self.downsample_factor))),
             ("projection_patch_size", str(int(self.projection_patch_size))),
@@ -2750,6 +3378,37 @@ class ColoredPclNode:
             ),
             ("debug_range_view", str(bool(self.debug_range_view))),
             ("debug_publish_fov_points", str(bool(self.debug_publish_fov_points))),
+            ("online_calibration_enable", str(bool(self.online_calibration_enable))),
+            ("online_calibration_status", self._online_calibration_status),
+            (
+                "online_calibration_every_n_frames",
+                str(int(self.online_calibration_every_n_frames)),
+            ),
+            (
+                "online_calibration_max_points",
+                str(int(self.online_calibration_max_points)),
+            ),
+            (
+                "online_calibration_step_deg",
+                f"{self.online_calibration_step_deg:.3f}",
+            ),
+            (
+                "online_calibration_learning_rate",
+                f"{self.online_calibration_learning_rate:.3f}",
+            ),
+            (
+                "online_calibration_max_correction_deg",
+                f"{self.online_calibration_max_correction_deg:.3f}",
+            ),
+            (
+                "online_calibration_min_observability",
+                f"{self.online_calibration_min_observability:.3f}",
+            ),
+            (
+                "online_calibration_rpy_deg",
+                "[%.3f %.3f %.3f]"
+                % tuple(np.degrees(self._online_calibration_rpy_rad).tolist()),
+            ),
             ("rolling_shutter_enable", str(bool(self.rolling_shutter_enable))),
             ("rolling_shutter_status", self._rolling_shutter_status),
             ("rolling_shutter_readout_sec", f"{self.rolling_shutter_readout_sec:.6f}"),
@@ -3138,15 +3797,30 @@ class ColoredPclNode:
             else:
                 points = pointcloud2_to_xyz(lidar_msg)
                 points = self._apply_lidar_points_compat(points)
+            corrected_camera_T_lidar = camera_T_lidar
+            if semantic_debug_img is not None:
+                sem_h, sem_w = semantic_debug_img.shape[:2]
+                corrected_camera_T_lidar = self._maybe_update_online_calibration(
+                    points=points,
+                    sem_img=semantic_debug_img,
+                    sem_type=semantic_debug_type,
+                    intrinsics=intrinsics,
+                    camera_T_lidar=camera_T_lidar,
+                    image_shape=(int(sem_h), int(sem_w)),
+                )
             debug_colors = None
             if self.debug_project_lidar and self.debug_projected_colorize == "depth":
-                points_cam_dbg = transform_points(camera_T_lidar, points)
+                points_cam_dbg = transform_points(corrected_camera_T_lidar, points)
                 debug_colors = self._depth_to_debug_colors(points_cam_dbg[:, 2])
 
             if self.semantic_input_type == "labels":
                 h, w = labels.shape
                 uv, inside = self._project_lidar_points(
-                    points, intrinsics, camera_T_lidar, (w, h), sem_msg.header.stamp
+                    points,
+                    intrinsics,
+                    corrected_camera_T_lidar,
+                    (w, h),
+                    sem_msg.header.stamp,
                 )
                 if self.debug_project_lidar and labels is not None:
                     base = (labels.astype(np.int32) % 256).astype(np.uint8)
@@ -3192,7 +3866,7 @@ class ColoredPclNode:
                         points_all=points,
                         points_selected=labeled_points,
                         intrinsics=intrinsics,
-                        camera_T_lidar=camera_T_lidar,
+                        camera_T_lidar=corrected_camera_T_lidar,
                         image_shape=(h, w),
                         u=u,
                         v=v,
@@ -3248,7 +3922,11 @@ class ColoredPclNode:
             else:
                 h, w = packed_img.shape
                 uv, inside = self._project_lidar_points(
-                    points, intrinsics, camera_T_lidar, (w, h), sem_msg.header.stamp
+                    points,
+                    intrinsics,
+                    corrected_camera_T_lidar,
+                    (w, h),
+                    sem_msg.header.stamp,
                 )
                 if self.debug_project_lidar:
                     base_rgb = packed_rgb_to_triplets(packed_img)
@@ -3288,7 +3966,7 @@ class ColoredPclNode:
                     points_all=points,
                     points_selected=points_in,
                     intrinsics=intrinsics,
-                    camera_T_lidar=camera_T_lidar,
+                    camera_T_lidar=corrected_camera_T_lidar,
                     image_shape=(h, w),
                     u=u,
                     v=v,
@@ -3343,7 +4021,7 @@ class ColoredPclNode:
                     sem_type=semantic_debug_type,
                     points=points,
                     intrinsics=intrinsics,
-                    camera_T_lidar=camera_T_lidar,
+                    camera_T_lidar=corrected_camera_T_lidar,
                     image_shape=(h, w),
                     u=debug_u,
                     v=debug_v,

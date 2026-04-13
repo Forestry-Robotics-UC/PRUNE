@@ -1,0 +1,19 @@
+# Generic dataset overrides for the active bag/URDF pair.
+semantic_topic: "/mapir/indices_color/veg_index"
+semantic_input_type: "rgb"
+confidence_topic: ""
+camera_info: "/mapir/camera_info"
+depth_input_topic: "/ouster/points"
+target_frame: "base_link"
+mode: "lidar"
+colorize_labels: true
+undistort_semantic: true
+undistort_alpha: 0.0
+projection_patch_size: 1
+max_depth_m: 30.0
+sync_slop_sec: 0.05
+pair_max_dt_sec: 0.05
+sync_queue_size: 15
+cloud_stamp_source: "lidar"
+debug_project_lidar: false
+debug_range_view: false

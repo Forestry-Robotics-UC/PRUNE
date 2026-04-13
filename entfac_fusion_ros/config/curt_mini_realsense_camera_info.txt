@@ -1,0 +1,44 @@
+# Curt Mini RealSense color-camera calibration for ENTFAC camera_info_txt.
+# Use with:
+#   roslaunch entfac_fusion_ros curt_mini.launch \
+#     camera_info_txt:=$(find entfac_fusion_ros)/config/curt_mini_realsense_camera_info.txt \
+#     camera_frame:=camera_color_optical_frame
+
+frame_id: camera_color_optical_frame
+camera_name: None
+distortion_model: plumb_bob
+image_width: 1920
+image_height: 1080
+
+D: [0.11492215611915527, -0.2320094787247583, 0.0009261003115564758, -0.002042947116822223, 0.0]
+K: [1361.9133894824827, 0.0, 963.1449443156744, 0.0, 1361.7649882415985, 535.9730779998762, 0.0, 0.0, 1.0]
+R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+P: [1360.9210205078125, 0.0, 958.3659763522883, 0.0, 0.0, 1381.599853515625, 536.1948243983206, 0.0, 0.0, 0.0, 1.0, 0.0]
+
+# Original source block (oST version 5.0 parameters)
+[image]
+width
+1920
+
+height
+1080
+
+[narrow_stereo]
+
+camera matrix
+1361.913389 0.000000 963.144944
+0.000000 1361.764988 535.973078
+0.000000 0.000000 1.000000
+
+distortion
+0.114922 -0.232009 0.000926 -0.002043 0.000000
+
+rectification
+1.000000 0.000000 0.000000
+0.000000 1.000000 0.000000
+0.000000 0.000000 1.000000
+
+projection
+1360.921021 0.000000 958.365976 0.000000
+0.000000 1381.599854 536.194824 0.000000
+0.000000 0.000000 1.000000 0.000000

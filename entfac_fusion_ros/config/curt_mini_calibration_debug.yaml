@@ -1,0 +1,110 @@
+# Curt Mini calibration-debug overrides for LiDAR-camera alignment work.
+# This profile uses the RealSense color stream so rolling-shutter correction
+# and CameraInfo undistortion apply to the same image being sampled.
+
+# Semantic or RGB image topic used for LiDAR coloring.
+semantic_topic: "/mapir/image_raw"
+# Semantic input representation: labels or rgb.
+semantic_input_type: "rgb"
+# Optional confidence image topic aligned with the semantic image.
+confidence_topic: ""
+# CameraInfo topic providing intrinsics and camera frame_id.
+camera_info: "/mapir/camera_info"
+# Geometry input topic, here the Ouster LiDAR cloud.
+depth_input_topic: "/ouster/points"
+# Output point-cloud frame after fusion.
+target_frame: "base_link"
+# Force the node into LiDAR fusion mode.
+mode: "lidar"
+# Publish RGB values in the output cloud.
+colorize_labels: true
+# Undistort the semantic/RGB image before projection.
+undistort_semantic: true
+# OpenCV undistort alpha: 0 crops to valid pixels.
+undistort_alpha: 0.0
+# Odd patch size used for robust image sampling per projected point.
+projection_patch_size: 3
+# Minimum image/geometric confidence required before transferred RGB is trusted.
+projection_confidence_min: 0.45
+# Depth margin in meters for z-buffer occlusion gating at the projected pixel.
+projection_occlusion_epsilon_m: 0.10
+# Pixel radius for local min-depth occlusion gating around the projected pixel.
+projection_occlusion_radius_px: 1
+# Reject RGB transfer when the projected point lands on a strong LiDAR depth edge.
+projection_reject_depth_edges: true
+# Normalized depth-edge threshold used for the rejection mask.
+projection_depth_edge_thresh: 0.10
+# Pixel radius used to dilate the depth-edge reject mask near thin objects.
+projection_depth_edge_radius_px: 2
+# Maximum accepted projected depth in meters.
+max_depth_m: 30.0
+# ApproximateTimeSynchronizer pairing window in seconds.
+sync_slop_sec: 0.02
+# Hard maximum semantic-vs-LiDAR timestamp difference in seconds.
+pair_max_dt_sec: 0.02
+# Synchronizer queue size.
+sync_queue_size: 15
+# Signed offset applied to semantic timestamps for pairing.
+semantic_time_offset_sec: 0.0
+# Which source stamp to use for the published fused cloud.
+cloud_stamp_source: "lidar"
+# Signed offset applied only to the published cloud header stamp.
+cloud_time_offset_sec: 0.0
+# Enable verbose node debug/status logging.
+debug: true
+# Period in seconds between status table prints.
+status_period: 1.0
+# Publish the projected-LiDAR overlay debug image.
+debug_project_lidar: true
+# Draw every Nth projected point in the overlay.
+debug_project_lidar_stride: 1
+# Marker radius in pixels for the overlay.
+debug_project_lidar_radius: 2
+# Draw projected markers as outlines so the RGB image stays visible.
+debug_project_lidar_outline_only: true
+# Publish LiDAR depth/edge/heatmap debug images and score.
+debug_range_view: true
+# Publish only the LiDAR points that passed the camera FOV test.
+debug_publish_fov_points: true
+
+# Enable rolling-shutter correction using the camera IMU.
+rolling_shutter_enable: true
+# Total rolling-shutter readout time in seconds.
+rolling_shutter_readout_sec: 0.03
+# Rolling-shutter scan direction across the image.
+rolling_shutter_direction: "top_to_bottom"
+# Camera IMU topic used for rolling-shutter correction.
+imu_topic: "/camera/imu"
+# TF frame for the camera IMU.
+imu_frame: "camera_imu_optical_frame"
+# Optional camera metadata topic for readout extraction.
+camera_metadata_topic: ""
+# Metadata key containing readout time; -1 disables metadata lookup.
+metadata_readout_key: -1
+# Scale factor converting metadata readout units into seconds.
+metadata_readout_scale: 1.0e-6
+# Max allowed metadata-vs-image timestamp difference in seconds.
+metadata_max_dt_sec: 0.1
+
+# Enable LiDAR deskew with per-point times and IMU.
+lidar_deskew_enable: true
+# Deskew mode: rotation, translation, or both.
+lidar_deskew_mode: "rotation"
+# Reference instant for deskewing each scan.
+lidar_deskew_ref: "start"
+# PointCloud2 field name containing per-point time.
+lidar_time_field: "t"
+# Scale factor converting per-point times into seconds.
+lidar_time_scale: 1.0e-9
+# LiDAR IMU topic used for deskew.
+lidar_imu_topic: "/ouster/imu"
+# TF frame for the LiDAR IMU.
+lidar_imu_frame: "os_imu"
+# Cache size for LiDAR IMU messages.
+lidar_imu_cache_size: 2000
+# Max allowed LiDAR-IMU timestamp difference in seconds.
+lidar_imu_cache_max_dt_sec: 0.02
+# Whether the LiDAR IMU acceleration is already gravity compensated.
+lidar_imu_accel_gravity_compensated: true
+# Apply the legacy Ouster sensor-frame compatibility correction.
+compat_ouster_sensor_frame: true

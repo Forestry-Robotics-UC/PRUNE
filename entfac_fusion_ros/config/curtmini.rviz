@@ -1,0 +1,361 @@
+Panels:
+  - Class: rviz/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz/Displays
+    Help Height: 70
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /TF1
+        - /PCL Colored1
+        - /RealSense1
+      Splitter Ratio: 0.6019070148468018
+    Tree Height: 114
+  - Class: rviz/Time
+    Name: Time
+    SyncMode: 0
+    SyncSource: RealSense
+Preferences:
+  PromptSaveOnExit: false
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/TF
+      Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        base_link:
+          Value: true
+        camera_color_optical_frame:
+          Value: true
+        camera_imu_frame:
+          Value: true
+        camera_imu_optical_frame:
+          Value: true
+        camera_link:
+          Value: true
+        cameras_tower_visual:
+          Value: true
+        chassis:
+          Value: true
+        gps:
+          Value: true
+        imu_link:
+          Value: true
+        mag:
+          Value: true
+        map:
+          Value: true
+        mapir3_optical_frame:
+          Value: true
+        odom:
+          Value: true
+        os_imu:
+          Value: true
+        os_lidar:
+          Value: true
+        os_sensor:
+          Value: true
+        ouster_tower_visual:
+          Value: true
+      Marker Alpha: 1
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        map:
+          odom:
+            base_link:
+              camera_link:
+                camera_imu_frame:
+                  camera_imu_optical_frame:
+                    {}
+              cameras_tower_visual:
+                {}
+              chassis:
+                {}
+              gps:
+                {}
+              imu_link:
+                {}
+              mag:
+                {}
+              os_sensor:
+                os_imu:
+                  {}
+                os_lidar:
+                  camera_color_optical_frame:
+                    {}
+                  mapir3_optical_frame:
+                    {}
+              ouster_tower_visual:
+                {}
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Class: rviz/RobotModel
+      Collision Enabled: false
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        back_left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        back_right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_color_optical_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_imu_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_imu_optical_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        cameras_tower_visual:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        chassis:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        front_left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        front_right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        gps:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        imu_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        mag:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        mapir3_optical_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        os_imu:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        os_lidar:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        os_sensor:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        ouster_tower_visual:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+      Name: RobotModel
+      Robot Description: robot_description
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: RGB8
+      Decay Time: 1
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: PCL Colored
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.03999999910593033
+      Style: Flat Squares
+      Topic: /ouster/rgb_colored
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: UFOMap
+      Enabled: true
+      Information:
+        "# Inner Nodes": 1
+        "# Leaf Nodes": 0
+        Resolution: 10 cm
+        Size: 24 bytes
+      Min. Depth: 0
+      Name: UFOMap
+      Occupancy Thresholds:
+        Free (%): 50
+        Occupied (%): 50
+      Queue size: 10
+      UFOMap Topic: /ufomap_mapping_server_node/map
+      Use BBX:
+        BBX Frame: <Fixed Frame>
+        Maximum:
+          X: 1000
+          Y: 1000
+          Z: 1000
+        Minimum:
+          X: -1000
+          Y: -1000
+          Z: -1000
+        Value: false
+      Value: true
+      Voxel Rendering:
+        Free:
+          Alpha: 0.029999999329447746
+          Coloring:
+            Color: 0; 255; 0
+            Factor: 0.800000011920929
+            Value: Fixed
+          Scale: 1
+          Style: Flat Squares
+          Value: false
+        Occupied:
+          Alpha: 1
+          Coloring:
+            Color: 0; 0; 255
+            Factor: 0.800000011920929
+            Value: Voxel Color
+          Scale: 1
+          Style: Flat Squares
+          Value: true
+        Unknown:
+          Alpha: 0.029999999329447746
+          Coloring:
+            Color: 255; 255; 255
+            Factor: 0.800000011920929
+            Value: Fixed
+          Scale: 1
+          Style: Flat Squares
+          Value: false
+    - Class: rviz/Image
+      Enabled: false
+      Image Topic: /camera/color/image_raw
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: RealSense
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: false
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /mapir/indices_color/veg_index
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Image
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Default Light: true
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+      Hide Inactive Objects: true
+  Value: true
+  Views:
+    Current:
+      Class: rviz/ThirdPersonFollower
+      Distance: 10
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Field of View: 0.7853981852531433
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: false
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.5253984928131104
+      Target Frame: base_link
+      Yaw: 3.0353970527648926
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 997
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Image:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd00000002000000000000034900000352fc0200000006fb0000000c00430061006d006500720061000000003b000001140000000000000000fb0000000a00560069006500770073010000003b0000018c000000a000fffffffb000000100044006900730070006c00610079007301000001cd000000f3000000c700fffffffb0000000a004d00610070006900720000000304000000b70000000000000000fb00000012005200650061006c00530065006e007300650000000254000001390000001600fffffffb0000000a0049006d00610067006501000002c6000000c70000001600ffffff000000030000078000000037fc0100000001fb0000000800540069006d0065010000000000000780000002ee00ffffff000004310000035200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  RealSense:
+    collapsed: false
+  Time:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1920
+  X: 0
+  Y: 27
