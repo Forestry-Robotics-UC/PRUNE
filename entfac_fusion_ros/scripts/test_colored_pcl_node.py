@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Derived from Semantic SLAM
+# ENTFAC Sensor Fusion implementation.
 #
-# Original Author:
-#   Xuan Zhang
-#
-# Subsequent Contributions:
-#   David Russell
+# Note:
+#   This file was developed specifically for ENTFAC Sensor Fusion.
+#   Project-level upstream attribution is documented in README.md.
 #
 # Modified by:
 #   Duda Andrada (ENTFAC Sensor Fusion)
-#
-# Original project:
-#   https://github.com/floatlazer/semantic_slam
 #
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>

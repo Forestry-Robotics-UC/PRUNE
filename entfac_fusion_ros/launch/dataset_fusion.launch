@@ -1,30 +1,23 @@
 <launch>
-  <arg name="use_sim_time" default="true"/>
-  <arg name="use_urdf" default="true"/>
+  <arg name="use_sim_time" default="false"/>
+  <arg name="use_urdf" default="false"/>
   <arg name="debug" default="false"/>
-  <arg name="rviz" default="true"/>
-  <arg name="rviz_config" default="$(find entfac_fusion_ros)/config/generic_main_topics.rviz"/>
-  <arg name="urdf_path" default="$(find entfac_fusion_ros)/urdf/apparatus.urdf.xacro"/>
-  <arg name="dataset_config" default="$(find entfac_fusion_ros)/config/dataset.yaml"/>
+  <arg name="rviz" default="false"/>
+  <arg name="rviz_config" default=""/>
+  <arg name="urdf_path" default=""/>
+  <arg name="dataset_config" default=""/>
+  <arg name="camera_info_txt" default=""/>
+  <arg name="camera_frame" default=""/>
   <arg name="target_frame" default="base_link"/>
   <arg name="output_topic" default="/ouster/rgb_colored"/>
   <arg name="publish_localization_tf" default="false"/>
-  <arg name="localization_topic" default="/localization_50hz"/>
+  <arg name="localization_topic" default="/localization"/>
   <arg name="localization_type" default="odom"/>
   <arg name="localization_parent_frame" default="odom"/>
   <arg name="localization_child_frame" default="$(arg target_frame)"/>
   <arg name="localization_stamp_source_topic" default=""/>
   <arg name="localization_stamp_source_type" default="image"/>
   <arg name="localization_stamp_source_max_age_sec" default="0.05"/>
-  <arg name="run_mapir_index" default="false"/>
-  <arg name="mapir_input_topic" default="/mapir/image_raw"/>
-  <arg name="mapir_raw_topic" default="/mapir/indices/veg_index/image_raw"/>
-  <arg name="mapir_preview_topic" default="/mapir/indices_color/veg_index"/>
-  <arg name="mapir_filter_set" default="OCN"/>
-  <arg name="mapir_nir_channel" default="-1"/>
-  <arg name="mapir_visible_channel" default="-1"/>
-  <arg name="mapir_colorize_min" default="0.20"/>
-  <arg name="mapir_colorize_max" default="0.75"/>
   <arg name="run_ufomap" default="false"/>
   <arg name="ufomap_pkg" default="ufomap_mapping"/>
   <arg name="ufomap_depth_levels" default="16"/>
@@ -39,7 +32,7 @@
 
 
   <group if="$(arg use_urdf)">
-    <param name="robot_description" command="$(find xacro)/xacro --inorder '$(arg urdf_path)'" />
+    <param name="robot_description" command="$(find xacro)/xacro '$(arg urdf_path)'" />
     <node pkg="robot_state_publisher"
           type="robot_state_publisher"
           name="robot_state_publisher"
@@ -60,18 +53,6 @@
     </node>
   </group>
 
-  <group if="$(arg run_mapir_index)">
-    <node pkg="entfac_fusion_ros" type="mapir_index_node.py" name="mapir_index_node" output="screen">
-      <param name="input_topic" value="$(arg mapir_input_topic)"/>
-      <param name="raw_topic" value="$(arg mapir_raw_topic)"/>
-      <param name="preview_topic" value="$(arg mapir_preview_topic)"/>
-      <param name="filter_set" value="$(arg mapir_filter_set)"/>
-      <param name="nir_channel" value="$(arg mapir_nir_channel)"/>
-      <param name="visible_channel" value="$(arg mapir_visible_channel)"/>
-      <param name="colorize_min" value="$(arg mapir_colorize_min)"/>
-      <param name="colorize_max" value="$(arg mapir_colorize_max)"/>
-    </node>
-  </group>
 
   <rosparam command="load"
             file="$(find entfac_fusion_ros)/config/core.yaml"
@@ -83,6 +64,12 @@
             file="$(arg dataset_config)"
             ns="colored_pcl_node"/>
   <param name="colored_pcl_node/target_frame" value="$(arg target_frame)"/>
+  <group if="$(eval arg('camera_info_txt') != '')">
+    <param name="colored_pcl_node/camera_info_txt" value="$(arg camera_info_txt)"/>
+  </group>
+  <group if="$(eval arg('camera_frame') != '')">
+    <param name="colored_pcl_node/camera_frame" value="$(arg camera_frame)"/>
+  </group>
 
   <node pkg="entfac_fusion_ros" type="colored_pcl_node.py" name="colored_pcl_node"
         output="screen"
@@ -91,6 +78,8 @@
   </node>
 
   <group if="$(arg run_ufomap)">
+  <node pkg="tf2_ros" type="static_transform_publisher" name="map_to_odom"
+      args="0 0 0 0 0 0 1 map odom"/>
     <node pkg="$(arg ufomap_pkg)" type="ufomap_mapping_server_node" name="ufomap_mapping_server_node" output="screen" required="true">
       <param name="resolution" value="$(arg ufomap_resolution)"/>
       <param name="depth_levels" value="$(arg ufomap_depth_levels)"/>
