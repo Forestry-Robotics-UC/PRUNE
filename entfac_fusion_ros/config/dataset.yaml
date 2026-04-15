@@ -3,6 +3,11 @@ semantic_topic: "/mapir/indices_color/veg_index"
 semantic_input_type: "rgb"
 confidence_topic: ""
 camera_info: "/mapir/camera_info"
+# Optional calibration text file fallback when camera_info is wrong/unavailable.
+# When set, this takes priority over camera_info intrinsics.
+camera_info_txt: ""
+# Optional fallback frame_id used when camera_info_txt has no frame_id.
+camera_frame: ""
 depth_input_topic: "/ouster/points"
 target_frame: "base_link"
 mode: "lidar"

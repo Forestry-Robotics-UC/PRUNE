@@ -90,6 +90,7 @@ python docs/tools/extract_ros_params.py > docs/manual/parameters.md
 | `~semantic_input_type` | `str` | `'labels'` | Semantic image representation: 'labels' (single-channel label IDs) or 'rgb' (3-channel colors used directly for output coloring). |
 | `~semantic_time_offset_sec` | `float` | `0.0` | Signed offset (seconds) applied to semantic timestamps for pairing and timestamp selection (negative shifts semantic earlier). |
 | `~semantic_topic` | `str` | `'/semantic/labels'` | Semantic label image topic (sensor_msgs/Image). |
+| `~stamp_debug_log_period_sec` | `float` | `2.0` | Minimum period (seconds) between timestamp/offset debug logs; set 0 to log every callback when debug=true. |
 | `~static_camera_T_lidar` | `list[16]` | `None` | Optional static 4x4 row-major matrix: lidar_frame -> camera_frame. Overrides TF. |
 | `~static_target_T_depth` | `list[16]` | `None` | Optional static 4x4 row-major matrix: depth_frame -> target_frame. Overrides TF. |
 | `~static_target_T_lidar` | `list[16]` | `None` | Optional static 4x4 row-major matrix: lidar_frame -> target_frame. Overrides TF. |

@@ -26,6 +26,7 @@ sync_queue_size: 5             # ApproximateTimeSynchronizer queue size
 
 cloud_time_offset_sec: 0.0     # signed offset added to output cloud stamp (negative shifts earlier)
 cloud_stamp_source: ""         # auto, semantic, depth, lidar, latest, earliest, midpoint
+stamp_debug_log_period_sec: 2.0 # min seconds between timestamp/offset debug logs (0 logs every callback when debug=true)
 
 downsample_factor: 1           # integer >=1; higher saves CPU
 semantic_color_quantization_step: 1  # used only for rgb input (set to 8/16 for JPEG artifacts)

@@ -101,7 +101,6 @@ from __future__ import annotations
 import cProfile
 import io
 import pstats
-import re
 import sys
 import time
 from contextlib import contextmanager
@@ -158,6 +157,24 @@ from entfac_fusion_ros.conversions import (
     pointcloud2_to_xyz_t,
     rgb_to_packed_u32,
 )
+from entfac_fusion_ros.colored_pcl_params import (
+    coerce_bool as _coerce_bool,
+    get_color_map as _get_color_map_helper,
+    get_matrix_param as _get_matrix_param_helper,
+    get_param as _get_param_helper,
+    get_param_bool as _get_param_bool_helper,
+    get_param_float as _get_param_float_helper,
+    get_param_int as _get_param_int_helper,
+    get_param_str as _get_param_str_helper,
+    load_camera_info_txt as _load_camera_info_txt_helper,
+    record_param as _record_param_helper,
+)
+from entfac_fusion_ros.colored_pcl_startup import (
+    log_correction_statuses as _log_correction_statuses_helper,
+    log_param_report as _log_param_report_helper,
+    log_startup_transforms as _log_startup_transforms_helper,
+    render_startup_table as _render_startup_table_helper,
+)
 from entfac_fusion_ros.logging_ros import NodeLogger, configure_core_logging
 from entfac_fusion_ros.pc2 import (
     build_label_rgb_float_lut,
@@ -165,38 +182,14 @@ from entfac_fusion_ros.pc2 import (
     semantic_pointcloud_to_msg,
 )
 from entfac_fusion_ros.ply import PlyJob, PlyWriterThread
-from entfac_fusion_ros.status import StatusReporter, render_kv_table, render_status_table
+from entfac_fusion_ros.status import StatusReporter, render_status_table
 from entfac_fusion_ros.tf_utils import format_matrix, transform_stamped_to_matrix
-
-
-def _coerce_bool(val: Any) -> bool:
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, (int, float)):
-        return bool(val)
-    if isinstance(val, str):
-        return val.strip().lower() in ("1", "true", "yes", "on")
-    return bool(val)
-
-
 def _rosargv_bool(name: str, default: bool = False) -> bool:
     prefix = f"_{name}:="
     for arg in sys.argv:
         if arg.startswith(prefix):
             return _coerce_bool(arg[len(prefix) :])
     return default
-
-
-def _rosargv_has_private_param(name: str) -> bool:
-    if not isinstance(name, str):
-        return False
-    key = name
-    if key.startswith("~"):
-        key = key[1:]
-    if "/" in key:
-        key = key.rsplit("/", 1)[-1]
-    prefix = f"_{key}:="
-    return any(arg.startswith(prefix) for arg in sys.argv)
 
 
 @dataclass
@@ -614,6 +607,13 @@ class ColoredPclNode:
             allow_empty=True,
         )
         self.cloud_stamp_source = (self.cloud_stamp_source or "").strip().lower()
+        self.stamp_debug_log_period_sec = self._get_param_float(
+            "~stamp_debug_log_period_sec",
+            2.0,
+            "Minimum period (seconds) between timestamp/offset debug logs; set 0 to log every callback when debug=true.",
+        )
+        if self.stamp_debug_log_period_sec < 0.0:
+            raise ValueError("~stamp_debug_log_period_sec must be >= 0")
         self.enable_profiling = self._get_param_bool(
             "~enable_profiling",
             False,
@@ -1020,6 +1020,7 @@ class ColoredPclNode:
         self._logged_depth_scaling = False
         self._logged_depth_summary = False
         self._logged_lidar_summary = False
+        self._stamp_debug_last_log_at = 0.0
 
         self._ply_writer = PlyWriterThread(queue_size=2)
         self._ply_recording = False
@@ -1098,352 +1099,50 @@ class ColoredPclNode:
     # ----------------------------
 
     def _record_param(self, name, value, source, description):
-        self._param_meta[name] = {
-            "value": value,
-            "source": source,
-            "description": description,
-        }
+        return _record_param_helper(self, name, value, source, description)
 
     def _get_param(self, name, default, description, *, allow_empty=False):
-        has = rospy.has_param(name)
-        if has:
-            value = rospy.get_param(name)
-            source = "param_server"
-        else:
-            value = default
-            source = "default"
-        if _rosargv_has_private_param(name):
-            source = "cli"
-        if not allow_empty and value in ("", None):
-            value = default
-        self._record_param(name, value, source, description)
-        return value
+        return _get_param_helper(
+            self, name, default, description, allow_empty=allow_empty
+        )
 
     def _get_param_str(self, name, default, description, *, allow_empty=False):
-        raw = self._get_param(name, default, description, allow_empty=allow_empty)
-        if raw is None:
-            val = None
-        else:
-            val = str(raw)
-        self._param_meta[name]["value"] = val
-        return val
+        return _get_param_str_helper(
+            self, name, default, description, allow_empty=allow_empty
+        )
 
     def _get_param_bool(self, name, default, description):
-        raw = self._get_param(name, default, description, allow_empty=True)
-        val = _coerce_bool(raw)
-        self._param_meta[name]["value"] = val
-        return val
+        return _get_param_bool_helper(self, name, default, description)
 
     def _get_param_int(self, name, default, description):
-        raw = self._get_param(name, default, description)
-        val = int(raw)
-        self._param_meta[name]["value"] = val
-        return val
+        return _get_param_int_helper(self, name, default, description)
 
     def _get_param_float(self, name, default, description):
-        raw = self._get_param(name, default, description)
-        val = float(raw)
-        self._param_meta[name]["value"] = val
-        return val
+        return _get_param_float_helper(self, name, default, description)
 
     def _get_matrix_param(self, name, description):
-        has = rospy.has_param(name)
-        raw = rospy.get_param(name, [])
-        source = "param_server" if has else "default"
-        mat = None
-        if isinstance(raw, list) and len(raw) == 16:
-            try:
-                mat = require_homogeneous_transform(
-                    np.asarray(raw, dtype=float).reshape(4, 4)
-                )
-            except ValueError as exc:
-                self._log.warn("_get_matrix_param", "%s rejected: %s", name, exc)
-        elif raw not in (None, [], {}):
-            self._log.warn(
-                "_get_matrix_param",
-                "%s expected 16-element list (row-major 4x4), got: %r",
-                name,
-                raw,
-            )
-        self._record_param(name, mat, source, description)
-        return mat
+        return _get_matrix_param_helper(self, name, description)
 
     def _get_color_map(self, name, description):
-        has = rospy.has_param(name)
-        raw = rospy.get_param(name, {})
-        source = "param_server" if has else "default"
-        color_map = None
-        if isinstance(raw, dict):
-            parsed = {}
-            for k, v in raw.items():
-                try:
-                    key_int = int(k)
-                    if isinstance(v, (list, tuple)) and len(v) == 3:
-                        parsed[key_int] = [int(v[0]), int(v[1]), int(v[2])]
-                except Exception:  # noqa: BLE001
-                    continue
-            color_map = parsed if parsed else None
-        self._record_param(name, color_map, source, description)
-        return color_map
+        return _get_color_map_helper(self, name, description)
 
     def _load_camera_info_txt(
         self, txt_path: str
     ) -> Tuple[np.ndarray, str, Optional[np.ndarray], str, Tuple[int, int], str]:
-        path = Path(str(txt_path)).expanduser()
-        if not path.is_absolute():
-            path = (Path.cwd() / path).resolve()
-        else:
-            path = path.resolve()
-        if not path.is_file():
-            raise ValueError(f"~camera_info_txt file not found: {path}")
-
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        number_pat = r"[-+]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][-+]?\d+)?"
-
-        def _extract_list(keys: Tuple[str, ...]) -> Optional[list]:
-            for key in keys:
-                pattern = (
-                    rf"(?is)(?:^|[\r\n])\s*{re.escape(key)}\s*[:=]\s*\[([^\]]+)\]"
-                )
-                match = re.search(pattern, text)
-                if match:
-                    vals = [float(v) for v in re.findall(number_pat, match.group(1))]
-                    if vals:
-                        return vals
-            return None
-
-        def _extract_scalar(keys: Tuple[str, ...]) -> str:
-            for key in keys:
-                pattern = (
-                    rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*"
-                    r"['\"]?([^'\"\s#]+)['\"]?\s*(?:#.*)?$"
-                )
-                match = re.search(pattern, text)
-                if match:
-                    return match.group(1).strip()
-            return ""
-
-        def _extract_float(keys: Tuple[str, ...]) -> Optional[float]:
-            for key in keys:
-                pattern = (
-                    rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*"
-                    rf"({number_pat})\s*(?:#.*)?$"
-                )
-                match = re.search(pattern, text)
-                if match:
-                    return float(match.group(1))
-            return None
-
-        def _extract_int(keys: Tuple[str, ...]) -> int:
-            for key in keys:
-                pattern = rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*([-+]?\d+)\s*(?:#.*)?$"
-                match = re.search(pattern, text)
-                if match:
-                    return int(match.group(1))
-            return 0
-
-        k_vals = _extract_list(("K", "k", "intrinsics", "camera_matrix_data"))
-        if k_vals is None:
-            match = re.search(
-                r"(?is)camera_matrix\s*:.*?data\s*:\s*\[([^\]]+)\]",
-                text,
-            )
-            if match:
-                k_vals = [float(v) for v in re.findall(number_pat, match.group(1))]
-        if not k_vals:
-            fx = _extract_float(("fx",))
-            fy = _extract_float(("fy",))
-            cx = _extract_float(("cx",))
-            cy = _extract_float(("cy",))
-            if None not in (fx, fy, cx, cy):
-                k_vals = [
-                    float(fx),
-                    0.0,
-                    float(cx),
-                    0.0,
-                    float(fy),
-                    float(cy),
-                    0.0,
-                    0.0,
-                    1.0,
-                ]
-        if not k_vals:
-            p_vals = _extract_list(("P", "projection_matrix_data"))
-            if p_vals is None:
-                match = re.search(
-                    r"(?is)projection_matrix\s*:.*?data\s*:\s*\[([^\]]+)\]",
-                    text,
-                )
-                if match:
-                    p_vals = [float(v) for v in re.findall(number_pat, match.group(1))]
-            if p_vals and len(p_vals) >= 12:
-                p = np.asarray(p_vals[:12], dtype=float).reshape(3, 4)
-                k_vals = p[:, :3].reshape(-1).tolist()
-        if not k_vals:
-            all_numbers = [float(v) for v in re.findall(number_pat, text)]
-            if len(all_numbers) == 9:
-                k_vals = all_numbers
-        if not k_vals or len(k_vals) < 9:
-            raise ValueError(
-                "~camera_info_txt does not contain intrinsics K. Expected "
-                "K/camera_matrix.data list or fx/fy/cx/cy scalars."
-            )
-
-        intrinsics = np.asarray(k_vals[:9], dtype=float).reshape(3, 3)
-        frame_id = _extract_scalar(("frame_id", "camera_frame", "camera_frame_id"))
-        distortion_model = _extract_scalar(("distortion_model",)).lower()
-        d_vals = _extract_list(("D", "distortion", "distortion_coefficients_data"))
-        if d_vals is None:
-            match = re.search(
-                r"(?is)distortion_coefficients\s*:.*?data\s*:\s*\[([^\]]+)\]",
-                text,
-            )
-            if match:
-                d_vals = [float(v) for v in re.findall(number_pat, match.group(1))]
-        distortion = np.asarray(d_vals, dtype=float).reshape(-1) if d_vals else None
-        width = max(0, int(_extract_int(("image_width", "width"))))
-        height = max(0, int(_extract_int(("image_height", "height"))))
-        if width == 0 or height == 0:
-            self._log.warn(
-                "_load_camera_info_txt",
-                "camera_info_txt=%s has no valid image width/height. Undistort may be disabled.",
-                path,
-            )
-        return intrinsics, frame_id, distortion, distortion_model, (height, width), str(path)
+        return _load_camera_info_txt_helper(self, txt_path)
 
     # ----------------------------
     # Startup report
     # ----------------------------
 
     def _log_startup_transforms(self):
-        """Emit a compact info-level report of the transforms active at startup."""
-        if self.mode == "depth":
-            src = "static_target_T_depth" if self.static_target_T_depth is not None else "tf2"
-            label = f"{self._depth_frame or '<depth_frame>'} -> {self.target_frame}"
-            if self.target_T_depth is None:
-                self._log.info(
-                    "_log_startup_transforms",
-                    "startup transform target_T_depth [%s] (%s): pending",
-                    label,
-                    src,
-                )
-            else:
-                self._log.info(
-                    "_log_startup_transforms",
-                    "startup transform target_T_depth [%s] (%s):\n%s",
-                    label,
-                    src,
-                    format_matrix(self.target_T_depth),
-                )
-            return
-
-        src_cam = "static_camera_T_lidar" if self.static_camera_T_lidar is not None else "tf2"
-        src_tgt = "static_target_T_lidar" if self.static_target_T_lidar is not None else "tf2"
-        lidar_label = self._lidar_frame or "<lidar_frame>"
-        cam_label = f"{lidar_label} -> {self.camera_frame}"
-        tgt_label = f"{lidar_label} -> {self.target_frame}"
-
-        if self.camera_T_lidar is None:
-            self._log.info(
-                "_log_startup_transforms",
-                "startup transform camera_T_lidar [%s] (%s): pending",
-                cam_label,
-                src_cam,
-            )
-        else:
-            self._log.info(
-                "_log_startup_transforms",
-                "startup transform camera_T_lidar [%s] (%s):\n%s",
-                cam_label,
-                src_cam,
-                format_matrix(self.camera_T_lidar),
-            )
-
-        if self.target_T_lidar is None:
-            self._log.info(
-                "_log_startup_transforms",
-                "startup transform target_T_lidar [%s] (%s): pending",
-                tgt_label,
-                src_tgt,
-            )
-        else:
-            self._log.info(
-                "_log_startup_transforms",
-                "startup transform target_T_lidar [%s] (%s):\n%s",
-                tgt_label,
-                src_tgt,
-                format_matrix(self.target_T_lidar),
-            )
+        _log_startup_transforms_helper(self)
 
     def _log_param_report(self):
-        self._log.info("_log_param_report", "colored_pcl_node debug report:")
-        self._log.info(
-            "_log_param_report",
-            "  source=cli means passed as _param:=...; source=param_server means set via YAML/launch; source=default means unset.",
-        )
-        for name in sorted(self._param_meta.keys()):
-            meta = self._param_meta[name]
-            val = meta["value"]
-            if isinstance(val, np.ndarray):
-                val_str = format_matrix(val)
-            else:
-                val_str = repr(val)
-            self._log.info(
-                "_log_param_report",
-                "  %s=%s (%s) - %s",
-                name,
-                val_str,
-                meta["source"],
-                meta["description"],
-            )
-        self._log.info("_log_param_report", "derived mode=%s", self.mode)
-        self._log.info("_log_param_report", "derived camera_frame=%s", self.camera_frame)
-        self._log.info(
-            "_log_param_report", "derived intrinsics=%s", format_matrix(self.intrinsics)
-        )
-        self._log.info(
-            "_log_param_report",
-            "active subscriptions: semantic=%s depth_input=%s confidence=%s",
-            self.semantic_topic,
-            self.depth_input_topic,
-            self.conf_topic,
-        )
-        self._log.info(
-            "_log_param_report",
-            "primed transforms: target_T_depth=%s camera_T_lidar=%s target_T_lidar=%s",
-            self.target_T_depth is not None,
-            self.camera_T_lidar is not None,
-            self.target_T_lidar is not None,
-        )
-        if self.target_T_depth is not None:
-            self._log.info(
-                "_log_param_report",
-                "target_T_depth=\n%s",
-                format_matrix(self.target_T_depth),
-            )
-        if self.camera_T_lidar is not None:
-            self._log.info(
-                "_log_param_report",
-                "camera_T_lidar=\n%s",
-                format_matrix(self.camera_T_lidar),
-            )
-        if self.target_T_lidar is not None:
-            self._log.info(
-                "_log_param_report",
-                "target_T_lidar=\n%s",
-                format_matrix(self.target_T_lidar),
-            )
+        _log_param_report_helper(self)
 
     def _log_correction_statuses(self) -> None:
-        self._log.info(
-            "_log_correction_statuses",
-            "correction status: undistort=%s rolling_shutter=%s lidar_deskew=%s lidar_points_compat=%s online_calibration=%s",
-            self._undistort_status,
-            self._rolling_shutter_status,
-            self._lidar_deskew_status,
-            self._compat_lidar_points_status,
-            self._online_calibration_status,
-        )
+        _log_correction_statuses_helper(self)
 
     # ----------------------------
     # Subscriptions / TF
@@ -2286,6 +1985,10 @@ class ColoredPclNode:
     ) -> None:
         if not self.debug:
             return
+        now = time.time()
+        period = float(self.stamp_debug_log_period_sec)
+        if period > 0.0 and (now - self._stamp_debug_last_log_at) < period:
+            return
         sem_pair_stamp = sem_stamp if sem_pair_stamp is None else sem_pair_stamp
         raw_dt_sec = (sem_stamp - other_stamp).to_sec()
         pair_dt_sec = (sem_pair_stamp - other_stamp).to_sec()
@@ -2304,6 +2007,7 @@ class ColoredPclNode:
             float(self.semantic_time_offset_sec),
             float(self.cloud_time_offset_sec),
         )
+        self._stamp_debug_last_log_at = now
 
     @contextmanager
     def _maybe_profile(self, label):
@@ -3308,182 +3012,7 @@ class ColoredPclNode:
         self._log.debug("status", "\n%s", table)
 
     def _render_startup_table(self) -> str:
-        services = (
-            f"save_ply={rospy.resolve_name('~save_ply')} "
-            f"set_ply_recording={rospy.resolve_name('~set_ply_recording')}"
-        )
-        ply_target = self.ply_target_frame or "-"
-        ply = (
-            f"recording={self._ply_recording} dir={self.ply_output_dir} "
-            f"target_frame={ply_target} use_latest={self.ply_tf_use_latest} "
-            f"tol={self.ply_tf_tolerance_sec:.6f}"
-        )
-        help_text = "\n".join(
-            [
-                f"rosservice call {rospy.resolve_name('~save_ply')} \"{{}}\"",
-                f"rosservice call {rospy.resolve_name('~set_ply_recording')} \"data: true\"",
-            ]
-        )
-
-        rows = [
-            ("node", self._node_name),
-            ("mode", f"{self.mode} ({self._mode_source})"),
-            ("mode_detail", self._mode_detail or "-"),
-            ("target_frame", self.target_frame),
-            ("camera_frame", self.camera_frame),
-            ("output", self._output_topic),
-            ("semantic_topic", self.semantic_topic),
-            ("semantic_type", self.semantic_input_type),
-            ("confidence_topic", self.conf_topic or "-"),
-            ("camera_info_source", self._camera_info_source or "-"),
-            ("camera_info", self.camera_info_topic or "-"),
-            ("camera_info_txt", self.camera_info_txt or "-"),
-            ("depth_input_topic", self.depth_input_topic or "-"),
-            ("downsample", str(int(self.downsample_factor))),
-            ("projection_patch_size", str(int(self.projection_patch_size))),
-            ("projection_confidence_min", f"{self.projection_confidence_min:.3f}"),
-            (
-                "projection_occlusion_epsilon_m",
-                f"{self.projection_occlusion_epsilon_m:.3f}",
-            ),
-            (
-                "projection_occlusion_radius_px",
-                str(int(self.projection_occlusion_radius_px)),
-            ),
-            (
-                "projection_reject_depth_edges",
-                str(bool(self.projection_reject_depth_edges)),
-            ),
-            (
-                "projection_depth_edge_thresh",
-                f"{self.projection_depth_edge_thresh:.3f}",
-            ),
-            (
-                "projection_depth_edge_radius_px",
-                str(int(self.projection_depth_edge_radius_px)),
-            ),
-            ("sync_slop_sec", f"{self.sync_slop_sec:.6f}"),
-            ("pair_max_dt_sec", f"{self.pair_max_dt_sec:.6f}"),
-            ("semantic_time_offset_sec", f"{self.semantic_time_offset_sec:.6f}"),
-            ("sync_queue_size", str(int(self.sync_queue_size))),
-            ("undistort_semantic", str(bool(self.undistort_semantic))),
-            ("undistort_status", self._undistort_status),
-            ("undistort_alpha", f"{self.undistort_alpha:.2f}"),
-            ("debug_project_lidar", str(bool(self.debug_project_lidar))),
-            ("debug_project_lidar_stride", str(int(self.debug_project_lidar_stride))),
-            ("debug_project_lidar_radius", str(int(self.debug_project_lidar_radius))),
-            (
-                "debug_project_lidar_outline_only",
-                str(bool(self.debug_project_lidar_outline_only)),
-            ),
-            ("debug_range_view", str(bool(self.debug_range_view))),
-            ("debug_publish_fov_points", str(bool(self.debug_publish_fov_points))),
-            ("online_calibration_enable", str(bool(self.online_calibration_enable))),
-            ("online_calibration_status", self._online_calibration_status),
-            (
-                "online_calibration_every_n_frames",
-                str(int(self.online_calibration_every_n_frames)),
-            ),
-            (
-                "online_calibration_max_points",
-                str(int(self.online_calibration_max_points)),
-            ),
-            (
-                "online_calibration_step_deg",
-                f"{self.online_calibration_step_deg:.3f}",
-            ),
-            (
-                "online_calibration_learning_rate",
-                f"{self.online_calibration_learning_rate:.3f}",
-            ),
-            (
-                "online_calibration_max_correction_deg",
-                f"{self.online_calibration_max_correction_deg:.3f}",
-            ),
-            (
-                "online_calibration_min_observability",
-                f"{self.online_calibration_min_observability:.3f}",
-            ),
-            (
-                "online_calibration_rpy_deg",
-                "[%.3f %.3f %.3f]"
-                % tuple(np.degrees(self._online_calibration_rpy_rad).tolist()),
-            ),
-            ("rolling_shutter_enable", str(bool(self.rolling_shutter_enable))),
-            ("rolling_shutter_status", self._rolling_shutter_status),
-            ("rolling_shutter_readout_sec", f"{self.rolling_shutter_readout_sec:.6f}"),
-            ("rolling_shutter_direction", self.rolling_shutter_direction),
-            ("imu_topic", self.imu_topic or "-"),
-            ("imu_frame", self.imu_frame or "-"),
-            ("camera_metadata_topic", self.camera_metadata_topic or "-"),
-            ("metadata_readout_key", str(int(self.metadata_readout_key))),
-            ("metadata_readout_scale", f"{self.metadata_readout_scale:.6g}"),
-            ("metadata_max_dt_sec", f"{self.metadata_max_dt_sec:.3f}"),
-            ("lidar_deskew_enable", str(bool(self.lidar_deskew_enable))),
-            ("lidar_deskew_status", self._lidar_deskew_status),
-            ("lidar_deskew_mode", self.lidar_deskew_mode),
-            ("lidar_deskew_ref", self.lidar_deskew_ref),
-            ("lidar_time_field", self.lidar_time_field),
-            ("lidar_time_scale", f"{self.lidar_time_scale:.3g}"),
-            ("lidar_imu_topic", self.lidar_imu_topic or "-"),
-            ("lidar_imu_frame", self.lidar_imu_frame or "-"),
-            ("lidar_imu_cache_size", str(int(self.lidar_imu_cache_size))),
-            ("lidar_imu_cache_max_dt_sec", f"{self.lidar_imu_cache_max_dt_sec:.3f}"),
-            (
-                "lidar_imu_accel_gravity_compensated",
-                str(bool(self.lidar_imu_accel_is_gravity_compensated)),
-            ),
-            ("compat_ouster_sensor_frame", str(bool(self.compat_ouster_sensor_frame))),
-            ("compat_lidar_points_status", self._compat_lidar_points_status),
-            ("max_depth_m", f"{self.max_depth_m:.3f}" if self.max_depth_m is not None else "-"),
-            ("cloud_time_offset_sec", f"{self.cloud_time_offset_sec:.6f}"),
-            ("cloud_stamp_source", self.cloud_stamp_source),
-            ("colorize_labels", str(bool(self.colorize_labels))),
-            ("ply", ply),
-            ("services", services),
-            ("help", help_text),
-        ]
-
-        def _fmt_tf(name: str, mat: Optional[np.ndarray], src: str, src_frame: str, dst_frame: str):
-            label = f"{src_frame or '<frame>'} -> {dst_frame}"
-            if mat is None:
-                return (name, f"{label} ({src}: pending)")
-            return (name, f"{label} ({src})\n{format_matrix(mat)}")
-
-        if self.mode == "depth":
-            src = "static_target_T_depth" if self.static_target_T_depth is not None else "tf2"
-            rows.append(
-                _fmt_tf(
-                    "target_T_depth",
-                    self.target_T_depth,
-                    src,
-                    self._depth_frame,
-                    self.target_frame,
-                )
-            )
-        else:
-            src_cam = "static_camera_T_lidar" if self.static_camera_T_lidar is not None else "tf2"
-            src_tgt = "static_target_T_lidar" if self.static_target_T_lidar is not None else "tf2"
-            rows.append(
-                _fmt_tf(
-                    "camera_T_lidar",
-                    self.camera_T_lidar,
-                    src_cam,
-                    self._lidar_frame,
-                    self.camera_frame,
-                )
-            )
-            rows.append(
-                _fmt_tf(
-                    "target_T_lidar",
-                    self.target_T_lidar,
-                    src_tgt,
-                    self._lidar_frame,
-                    self.target_frame,
-                )
-            )
-
-        return render_kv_table(rows)
+        return _render_startup_table_helper(self)
 
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None):
         t0 = time.perf_counter()
