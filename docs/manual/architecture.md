@@ -37,8 +37,11 @@
    - LiDAR mode: `fuse_lidar_semantics(...)`
 4. Publish semantic `PointCloud2`
 
-## Configuration
+## Configuration entry points
 
-- Base defaults: `config/core.yaml`
-- Advanced timing/correction: `config/expert.yaml`
-- Launch-time `<param>` overrides YAML values.
+- **YAML defaults**: `config/core.yaml` + `config/expert.yaml` loaded via `rosparam` under `colored_pcl_node/*`
+- **Launch overrides**: `<param>` overrides YAML if set (avoid empty-string overrides)
+- **Project overrides**: optional site-specific YAML layered after core/expert in launch
+- **Extrinsics**:
+  - preferred: TF/URDF (read at init / first callback)
+  - bag replay / fixed rigs: static `~static_*` matrices to avoid TF waits

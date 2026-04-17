@@ -3,10 +3,12 @@ FROM ros:noetic-ros-core
 ARG USERNAME=ros
 ARG USER_UID=1000
 ARG USER_GID=1000
+ARG UBUNTU_APT_MIRROR=http://de.archive.ubuntu.com/ubuntu
 
 # Install ROS dependencies and basic tooling
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_APT_MIRROR}|g" /etc/apt/sources.list && \
+    apt-get -o Acquire::Retries=10 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=10 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --fix-missing --no-install-recommends \
         sudo \
         build-essential \
         cmake \
@@ -28,6 +30,7 @@ RUN apt-get update && \
         ros-noetic-xacro \
         ros-noetic-rosbag \
         ros-noetic-roslaunch \
+        ros-noetic-rviz \
     && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep (update may require network; run it at runtime if needed)

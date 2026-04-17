@@ -147,31 +147,16 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
 
 ## Docker (core tests)
 ```bash
-docker build -t entfac-sensor-fusion -f Docker/entfac-sensor-fusion.Dockerfile .
-docker run --rm entfac-sensor-fusion
+docker build -t ros-entfac -f Docker/entfac-sensor-fusion-noetic.Dockerfile .
+docker run --rm -it ros-entfac
 ```
 
 ## Docker (ROS)
-- Curt Mini + iCNF bags workflow (compose defaults assume bags under `/mnt/t7_shield`):
+- General usage (interactive shell):
   ```bash
-  export BAGS_PATH=/mnt/t7_shield
-  export CURT_DESCRIPTION_PATH=/home/forestsphere/work_utils/curt_dataset_recorder/ros2_ws/curt_description
-  export ENTFAC_CPUS=8.0
-  export ENTFAC_MEM_LIMIT=12g
-  export ENTFAC_MEMSWAP_LIMIT=12g
-
-  docker compose -f dataset-compose.yml build dataset-processing
-  docker compose -f dataset-compose.yml up -d dataset-processing
-  docker compose -f dataset-compose.yml run --rm curt-mini-icnf-bag-play
+  docker compose -f docker-compose.yml run --rm sensor-fusion-ros
   ```
-  Notes:
-  - `CURT_DESCRIPTION_PATH` must point to the Curt description repo root that contains `urdf/robot.urdf.xacro`.
-  - The path is mounted at `/opt/curt_description` inside the container (kept outside catkin `src` to avoid ROS1/ROS2 workspace mixing).
-- GPU run (optional, NVIDIA runtime required):
-  ```bash
-  docker compose -f dataset-compose.yml up -d curt-mini-icnf-gpu
-  docker compose -f dataset-compose.yml run --rm curt-mini-icnf-bag-play
-  ```
+- ForestSphere-specific compose, URDFs, launch scripts, and dataset workflow are documented in `forestsphere.md`.
 
 ## Documentation
 - Build locally: `pip install -r docs/requirements.txt && sphinx-build -b html docs docs/_build/html`
@@ -180,79 +165,29 @@ docker run --rm entfac-sensor-fusion
   Bags are available under `/bags`.
 
 ## Time sync tools (offline bags)
-Two offline tools help estimate and validate camera↔LiDAR timing offsets:
-- `tools/rosbag_time_skew.py`: fast nearest-neighbor skew stats (median/percentiles).
-- `tools/rosbag_sync_metric.py`: SoA metric sweep (motion corr + optional edge/semantic).
-- Full guide (math, thresholds, expected outputs): `tools/tools.md`.
+Current offline timing utility:
+- `tools/rosbag_time_skew.py`: nearest-neighbor timestamp skew stats (mean/median/min/max/p95/p99).
+- Full usage guide: `tools/tools.md`.
 
 Examples:
 ```bash
 # Fast skew stats (nearest-neighbor deltas)
 python tools/rosbag_time_skew.py /data/*.bag /camera/image /os_cloud_node/points
 
-# SoA sweep via --soa (delegates to rosbag_sync_metric.py)
-python tools/rosbag_time_skew.py --soa /data/*.bag /camera/image /os_cloud_node/points \
-  --dt-range 0.2 --dt-step 0.002 --out /tmp/soa_sync.csv
-
-# Enable edge alignment (needs CameraInfo + camera_T_lidar)
-python tools/rosbag_time_skew.py --soa /data/*.bag /camera/image /os_cloud_node/points \
-  --edge --camera-info /camera/camera_info \
-  --camera-T-lidar "1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1"
-
-# Validate a candidate offset without rewriting bags (shift topic_b timestamps)
-python tools/rosbag_time_skew.py --soa /data/*.bag /camera/image /os_cloud_node/points \
-  --topic-b-offset -0.166 --dt-range 0.05 --dt-step 0.001
-
-# Save report + plots (score curve, windowed offsets)
-python tools/rosbag_time_skew.py --soa /data/*.bag /camera/image /os_cloud_node/points \
-  --out-dir /tmp/soa_results --window-sec 20
-
-# Overlay proof artifacts (PNGs + optional MP4) require CameraInfo + camera_T_lidar
-python tools/rosbag_time_skew.py --soa /data/*.bag /camera/image /os_cloud_node/points \
-  --camera-info /camera/camera_info \
-  --camera-T-lidar "1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1" \
-  --overlay --overlay-max-frames 80 --overlay-mp4 --out-dir /tmp/soa_results
-
-# Use a JSON/YAML config file (YAML requires PyYAML)
-python tools/rosbag_time_skew.py --soa --config tools/rosbag_sync_metric.example.yaml
-python tools/rosbag_time_skew.py --config tools/rosbag_time_skew.example.yaml
+# Analyze all .bag files under a directory
+python tools/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
 ```
-
-Workflow:
-1) Sweep Δt → pick the best score.
-2) Rewrite bag timestamps (apply offset to topic_b).
-3) Re-run to confirm best score near Δt ≈ 0.
 
 ## Docker (ROS + GUI / RViz)
 - Optional X11-forwarding service for debugging GUI tools (RViz, rqt) from inside the container:
   ```bash
   xhost +si:localuser:$(whoami)
-  docker compose run --rm sensor-fusion-ros-gui
+  docker compose -f docker-compose.yml run --rm sensor-fusion-ros-gui
   # inside:
   rviz
   ```
   To revoke access: `xhost -si:localuser:$(whoami)`.
   If `rviz` is not installed in your image, install `ros-noetic-rviz` (or run RViz on the host).
-
-## Dataset container (X11 / RViz)
-- The dataset compose stack mounts the active host X11 cookie to `/tmp/fruc.xauth` inside the container.
-- If your current session does not export the correct cookie path, override it explicitly before creating the container:
-  ```bash
-  export DISPLAY=${DISPLAY:-:1}
-  export XAUTHORITY_PATH=${XAUTHORITY_PATH:-${XAUTHORITY:-${HOME}/.Xauthority}}
-  export BAGS_PATH=${BAGS_PATH:-/mnt/t7_shield}
-  export CURT_DESCRIPTION_PATH=${CURT_DESCRIPTION_PATH:-/home/forestsphere/work_utils/curt_dataset_recorder/ros2_ws/curt_description}
-  docker compose -f dataset-compose.yml up -d dataset-processing
-  ```
-- If `entfac_dataset_processing` was created from a different session (for example an old SSH `DISPLAY=localhost:11.0`), remove and recreate it so Docker picks up the current `DISPLAY` and Xauthority bind:
-  ```bash
-  docker rm -f entfac_dataset_processing
-  docker compose -f dataset-compose.yml up -d dataset-processing
-  ```
-- Play iCNF bags from `/mnt/t7_shield` (or your `BAGS_PATH`) in a separate terminal:
-  ```bash
-  docker compose -f dataset-compose.yml run --rm curt-mini-icnf-bag-play
-  ```
 
 ## Testing
 ```bash

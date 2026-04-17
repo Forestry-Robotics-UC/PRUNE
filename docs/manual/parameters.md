@@ -6,6 +6,8 @@ Generated from `entfac_fusion_ros/entfac_fusion_ros/colored_pcl_node.py` using:
 python docs/tools/extract_ros_params.py > docs/manual/parameters.md
 ```
 
+Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entfac_fusion_ros/config/expert.yaml`, then overridden by launch-time params when set.
+
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `~camera_frame` | `str` | `''` | Optional camera frame override used when ~camera_info_txt does not include frame_id. |
