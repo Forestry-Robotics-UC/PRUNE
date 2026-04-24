@@ -116,6 +116,11 @@ from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
 from std_msgs.msg import Float32
 from std_srvs.srv import SetBool, SetBoolResponse, Trigger, TriggerResponse
 
+try:
+    from dynamic_reconfigure.server import Server as DynamicReconfigureServer
+except Exception:  # noqa: BLE001
+    DynamicReconfigureServer = None
+
 # Ensure core package is importable when running from a monorepo source tree.
 # In a proper catkin workspace, this is handled by PYTHONPATH via devel/setup.bash.
 _THIS = Path(__file__).resolve()
@@ -184,6 +189,13 @@ from entfac_fusion_ros.pc2 import (
 from entfac_fusion_ros.ply import PlyJob, PlyWriterThread
 from entfac_fusion_ros.status import StatusReporter, render_status_table
 from entfac_fusion_ros.tf_utils import format_matrix, transform_stamped_to_matrix
+
+try:
+    from entfac_fusion_ros.cfg import ColoredPclTuningConfig
+except Exception:  # noqa: BLE001
+    ColoredPclTuningConfig = None
+
+
 def _rosargv_bool(name: str, default: bool = False) -> bool:
     prefix = f"_{name}:="
     for arg in sys.argv:
@@ -379,6 +391,13 @@ class ColoredPclNode:
         ).strip().lower()
         if self.lidar_deskew_ref not in ("start", "mid"):
             raise ValueError("~lidar_deskew_ref must be start or mid")
+        self.lidar_deskew_imu_samples = self._get_param_int(
+            "~lidar_deskew_imu_samples",
+            1,
+            "Number of IMU samples used across each scan for LiDAR deskew (1 keeps the lightweight single-sample model; values >1 better handle fast motion).",
+        )
+        if self.lidar_deskew_imu_samples < 1:
+            raise ValueError("~lidar_deskew_imu_samples must be >= 1")
         self.lidar_imu_topic = self._get_param_str(
             "~lidar_imu_topic",
             "",
@@ -667,6 +686,67 @@ class ColoredPclNode:
             False,
             "If true (lidar mode), publish LiDAR depth/edge images, a reprojection heatmap, and an alignment score.",
         )
+        self.tracked_reprojection_enable = self._get_param_bool(
+            "~tracked_reprojection_enable",
+            False,
+            "Enable stateful feature-tracked LiDAR reprojection diagnostics. This is heavier than the online edge score and is intended mainly for offline rosbag review.",
+        )
+        self.tracked_reprojection_max_corners = self._get_param_int(
+            "~tracked_reprojection_max_corners",
+            300,
+            "Maximum number of tracked image features used by the tracked reprojection diagnostic.",
+        )
+        if self.tracked_reprojection_max_corners < 20:
+            raise ValueError("~tracked_reprojection_max_corners must be >= 20")
+        self.tracked_reprojection_quality_level = self._get_param_float(
+            "~tracked_reprojection_quality_level",
+            0.01,
+            "Shi-Tomasi quality level for tracked reprojection feature detection.",
+        )
+        if not 0.0 < self.tracked_reprojection_quality_level <= 1.0:
+            raise ValueError("~tracked_reprojection_quality_level must be in (0, 1]")
+        self.tracked_reprojection_min_distance_px = self._get_param_float(
+            "~tracked_reprojection_min_distance_px",
+            8.0,
+            "Minimum pixel spacing between tracked reprojection features.",
+        )
+        if self.tracked_reprojection_min_distance_px <= 0.0:
+            raise ValueError("~tracked_reprojection_min_distance_px must be > 0")
+        self.tracked_reprojection_min_tracks = self._get_param_int(
+            "~tracked_reprojection_min_tracks",
+            80,
+            "Minimum number of active tracks to maintain before replenishing features.",
+        )
+        if self.tracked_reprojection_min_tracks < 10:
+            raise ValueError("~tracked_reprojection_min_tracks must be >= 10")
+        self.tracked_reprojection_fb_thresh_px = self._get_param_float(
+            "~tracked_reprojection_fb_thresh_px",
+            1.5,
+            "Forward-backward optical-flow consistency threshold in pixels.",
+        )
+        if self.tracked_reprojection_fb_thresh_px <= 0.0:
+            raise ValueError("~tracked_reprojection_fb_thresh_px must be > 0")
+        self.tracked_reprojection_depth_edge_thresh = self._get_param_float(
+            "~tracked_reprojection_depth_edge_thresh",
+            0.15,
+            "Normalized LiDAR depth-edge threshold used to convert the projected depth map into an edge target for tracked reprojection.",
+        )
+        if not 0.0 <= self.tracked_reprojection_depth_edge_thresh <= 1.0:
+            raise ValueError("~tracked_reprojection_depth_edge_thresh must be in [0, 1]")
+        self.tracked_reprojection_min_image_edge = self._get_param_float(
+            "~tracked_reprojection_min_image_edge",
+            0.05,
+            "Minimum image-edge strength required for a tracked feature to contribute to the reprojection error metric.",
+        )
+        if not 0.0 <= self.tracked_reprojection_min_image_edge <= 1.0:
+            raise ValueError("~tracked_reprojection_min_image_edge must be in [0, 1]")
+        self.tracked_reprojection_log_period_sec = self._get_param_float(
+            "~tracked_reprojection_log_period_sec",
+            2.0,
+            "Minimum seconds between tracked reprojection status logs.",
+        )
+        if self.tracked_reprojection_log_period_sec < 0.0:
+            raise ValueError("~tracked_reprojection_log_period_sec must be >= 0")
         self.debug_publish_fov_points = self._get_param_bool(
             "~debug_publish_fov_points",
             False,
@@ -801,6 +881,8 @@ class ColoredPclNode:
         self.debug_lidar_edge_topic = "/debug/lidar_edge"
         self.debug_reprojection_heatmap_topic = "/debug/reprojection_heatmap"
         self.debug_alignment_score_topic = "/debug/alignment_score"
+        self.debug_tracked_reprojection_topic = "/debug/tracked_reprojection"
+        self.debug_tracked_reprojection_error_topic = "/debug/tracked_reprojection_error_px"
         self.debug_fov_points_topic = "/debug/lidar_points_in_fov"
         self.debug_calibration_health_topic = "/debug/calibration_health"
         self.debug_calibration_uncertainty_topic = "/debug/calibration_uncertainty"
@@ -929,6 +1011,8 @@ class ColoredPclNode:
         self._debug_edge_pub = None
         self._debug_heatmap_pub = None
         self._debug_score_pub = None
+        self._debug_tracked_reprojection_pub = None
+        self._debug_tracked_reprojection_error_pub = None
         self._debug_fov_points_pub = None
         if self.debug_range_view:
             self._debug_depth_pub = rospy.Publisher(
@@ -942,6 +1026,13 @@ class ColoredPclNode:
             )
             self._debug_score_pub = rospy.Publisher(
                 self.debug_alignment_score_topic, Float32, queue_size=1
+            )
+        if self.tracked_reprojection_enable:
+            self._debug_tracked_reprojection_pub = rospy.Publisher(
+                self.debug_tracked_reprojection_topic, Image, queue_size=1
+            )
+            self._debug_tracked_reprojection_error_pub = rospy.Publisher(
+                self.debug_tracked_reprojection_error_topic, Float32, queue_size=1
             )
         if self.debug_publish_fov_points:
             self._debug_fov_points_pub = rospy.Publisher(
@@ -1007,11 +1098,32 @@ class ColoredPclNode:
         self._lidar_imu_cache = None
         self._lidar_imu_sub = None
         self._lidar_imu_to_lidar_R = None
+        self._tracked_reprojection_prev_gray = None
+        self._tracked_reprojection_prev_pts = None
+        self._tracked_reprojection_last_log_at = 0.0
         self._rolling_shutter_log_at = 0.0
         self._rolling_shutter_warn_at = 0.0
         self._lidar_deskew_log_at = 0.0
         self._lidar_deskew_warn_at = 0.0
         self._lidar_deskew_missing_time_warn_at = 0.0
+        self._live_param_refresh_period_sec = 0.5
+        self._live_param_last_refresh_at = 0.0
+        self._dynamic_reconfigure_server = None
+        self._dynamic_reconfigure_initialized = False
+
+        if self.tracked_reprojection_enable:
+            if self.mode != "lidar":
+                self._log.warn(
+                    "__init__",
+                    "tracked_reprojection_enable=true requires lidar mode; disabling because mode=%s",
+                    self.mode,
+                )
+                self.tracked_reprojection_enable = False
+            else:
+                self._log.warn(
+                    "__init__",
+                    "Tracked reprojection diagnostics are stateful and CPU-heavier than the online path; use them primarily for offline bag review or focused validation runs.",
+                )
 
         self._rgb_lut = None
         self._rgb_lut_num_labels = None
@@ -1077,6 +1189,7 @@ class ColoredPclNode:
         )
         self._srv_save_ply = rospy.Service("~save_ply", Trigger, self._srv_save_ply)
 
+        self._setup_dynamic_reconfigure()
         self._register_subscribers()
         self._log.info("__init__", "\n%s", self._render_startup_table())
         self._log_correction_statuses()
@@ -1243,11 +1356,305 @@ class ColoredPclNode:
             self.conf_topic,
         )
 
+    def _setup_dynamic_reconfigure(self) -> None:
+        if DynamicReconfigureServer is None or ColoredPclTuningConfig is None:
+            missing = []
+            if DynamicReconfigureServer is None:
+                missing.append("dynamic_reconfigure.server")
+            if ColoredPclTuningConfig is None:
+                missing.append("entfac_fusion_ros.cfg.ColoredPclTuningConfig")
+            self._log.warn(
+                "_setup_dynamic_reconfigure",
+                "rqt_reconfigure support is unavailable because %s could not be imported. Build the catkin workspace so the generated dynamic_reconfigure modules exist.",
+                ", ".join(missing),
+            )
+            return
+
+        self._dynamic_reconfigure_server = DynamicReconfigureServer(
+            ColoredPclTuningConfig, self._dynamic_reconfigure_callback
+        )
+        self._log.info(
+            "_setup_dynamic_reconfigure",
+            "rqt_reconfigure is ready on %s for live projection/debug tuning.",
+            rospy.get_name(),
+        )
+
+    def _dynamic_reconfigure_callback(self, config, _level):
+        changes = []
+        initialized = self._dynamic_reconfigure_initialized
+
+        def _update(attr: str, param_name: str, value) -> None:
+            current = getattr(self, attr)
+            if current == value:
+                return
+            setattr(self, attr, value)
+            meta = self._param_meta.get(param_name)
+            if meta is not None:
+                meta["value"] = value
+            if initialized:
+                changes.append(f"{attr}={value}")
+
+        patch_size = int(config["projection_patch_size"])
+        if patch_size < 1:
+            patch_size = 1
+        if (patch_size % 2) == 0:
+            patch_size = patch_size + 1 if patch_size < 9 else patch_size - 1
+        config["projection_patch_size"] = patch_size
+
+        _update(
+            "projection_patch_size",
+            "~projection_patch_size",
+            int(config["projection_patch_size"]),
+        )
+        _update(
+            "projection_confidence_min",
+            "~projection_confidence_min",
+            float(config["projection_confidence_min"]),
+        )
+        _update(
+            "projection_occlusion_epsilon_m",
+            "~projection_occlusion_epsilon_m",
+            float(config["projection_occlusion_epsilon_m"]),
+        )
+        _update(
+            "projection_occlusion_radius_px",
+            "~projection_occlusion_radius_px",
+            int(config["projection_occlusion_radius_px"]),
+        )
+        _update(
+            "projection_reject_depth_edges",
+            "~projection_reject_depth_edges",
+            bool(config["projection_reject_depth_edges"]),
+        )
+        _update(
+            "projection_depth_edge_thresh",
+            "~projection_depth_edge_thresh",
+            float(config["projection_depth_edge_thresh"]),
+        )
+        _update(
+            "projection_depth_edge_radius_px",
+            "~projection_depth_edge_radius_px",
+            int(config["projection_depth_edge_radius_px"]),
+        )
+        _update(
+            "debug_project_lidar",
+            "~debug_project_lidar",
+            bool(config["debug_project_lidar"]),
+        )
+        _update(
+            "debug_project_lidar_stride",
+            "~debug_project_lidar_stride",
+            int(config["debug_project_lidar_stride"]),
+        )
+        _update(
+            "debug_project_lidar_radius",
+            "~debug_project_lidar_radius",
+            int(config["debug_project_lidar_radius"]),
+        )
+        _update(
+            "debug_project_lidar_outline_only",
+            "~debug_project_lidar_outline_only",
+            bool(config["debug_project_lidar_outline_only"]),
+        )
+        _update(
+            "tracked_reprojection_fb_thresh_px",
+            "~tracked_reprojection_fb_thresh_px",
+            float(config["tracked_reprojection_fb_thresh_px"]),
+        )
+        _update(
+            "tracked_reprojection_depth_edge_thresh",
+            "~tracked_reprojection_depth_edge_thresh",
+            float(config["tracked_reprojection_depth_edge_thresh"]),
+        )
+        _update(
+            "tracked_reprojection_min_image_edge",
+            "~tracked_reprojection_min_image_edge",
+            float(config["tracked_reprojection_min_image_edge"]),
+        )
+        _update(
+            "tracked_reprojection_min_tracks",
+            "~tracked_reprojection_min_tracks",
+            int(config["tracked_reprojection_min_tracks"]),
+        )
+
+        if self.debug_project_lidar and self._debug_proj_pub is None:
+            self._debug_proj_pub = rospy.Publisher(
+                self.debug_projected_topic, Image, queue_size=1
+            )
+
+        if initialized and changes:
+            self._log.info(
+                "_dynamic_reconfigure_callback",
+                "Live tuning update: %s",
+                ", ".join(changes),
+            )
+
+        self._dynamic_reconfigure_initialized = True
+        return config
+
     def _get_live_param_float(self, name: str, fallback: float) -> float:
         try:
             return float(rospy.get_param(name, fallback))
         except Exception:  # noqa: BLE001
             return fallback
+
+    def _get_live_param_int(self, name: str, fallback: int) -> int:
+        try:
+            return int(rospy.get_param(name, fallback))
+        except Exception:  # noqa: BLE001
+            return fallback
+
+    def _get_live_param_bool(self, name: str, fallback: bool) -> bool:
+        try:
+            return _coerce_bool(rospy.get_param(name, fallback))
+        except Exception:  # noqa: BLE001
+            return fallback
+
+    def _maybe_refresh_live_tuning_params(self) -> None:
+        now = time.time()
+        if (
+            self._live_param_last_refresh_at > 0.0
+            and (now - self._live_param_last_refresh_at) < self._live_param_refresh_period_sec
+        ):
+            return
+        self._live_param_last_refresh_at = now
+
+        changes = []
+
+        def _update(attr: str, value, valid) -> None:
+            if not valid(value):
+                return
+            current = getattr(self, attr)
+            if current != value:
+                setattr(self, attr, value)
+                changes.append(f"{attr}={value}")
+
+        _update(
+            "projection_patch_size",
+            self._get_live_param_int("~projection_patch_size", self.projection_patch_size),
+            lambda value: value >= 1 and (value % 2) == 1,
+        )
+        _update(
+            "projection_confidence_min",
+            self._get_live_param_float(
+                "~projection_confidence_min", self.projection_confidence_min
+            ),
+            lambda value: 0.0 <= value <= 1.0,
+        )
+        _update(
+            "projection_occlusion_epsilon_m",
+            self._get_live_param_float(
+                "~projection_occlusion_epsilon_m",
+                self.projection_occlusion_epsilon_m,
+            ),
+            lambda value: value >= 0.0,
+        )
+        _update(
+            "projection_occlusion_radius_px",
+            self._get_live_param_int(
+                "~projection_occlusion_radius_px",
+                self.projection_occlusion_radius_px,
+            ),
+            lambda value: value >= 0,
+        )
+        _update(
+            "projection_reject_depth_edges",
+            self._get_live_param_bool(
+                "~projection_reject_depth_edges",
+                self.projection_reject_depth_edges,
+            ),
+            lambda value: isinstance(value, bool),
+        )
+        _update(
+            "projection_depth_edge_thresh",
+            self._get_live_param_float(
+                "~projection_depth_edge_thresh",
+                self.projection_depth_edge_thresh,
+            ),
+            lambda value: 0.0 <= value <= 1.0,
+        )
+        _update(
+            "projection_depth_edge_radius_px",
+            self._get_live_param_int(
+                "~projection_depth_edge_radius_px",
+                self.projection_depth_edge_radius_px,
+            ),
+            lambda value: value >= 0,
+        )
+        _update(
+            "debug_project_lidar",
+            self._get_live_param_bool(
+                "~debug_project_lidar",
+                self.debug_project_lidar,
+            ),
+            lambda value: isinstance(value, bool),
+        )
+        _update(
+            "debug_project_lidar_stride",
+            self._get_live_param_int(
+                "~debug_project_lidar_stride", self.debug_project_lidar_stride
+            ),
+            lambda value: value >= 1,
+        )
+        _update(
+            "debug_project_lidar_radius",
+            self._get_live_param_int(
+                "~debug_project_lidar_radius", self.debug_project_lidar_radius
+            ),
+            lambda value: value >= 0,
+        )
+        _update(
+            "debug_project_lidar_outline_only",
+            self._get_live_param_bool(
+                "~debug_project_lidar_outline_only",
+                self.debug_project_lidar_outline_only,
+            ),
+            lambda value: isinstance(value, bool),
+        )
+        _update(
+            "tracked_reprojection_fb_thresh_px",
+            self._get_live_param_float(
+                "~tracked_reprojection_fb_thresh_px",
+                self.tracked_reprojection_fb_thresh_px,
+            ),
+            lambda value: value > 0.0,
+        )
+        _update(
+            "tracked_reprojection_depth_edge_thresh",
+            self._get_live_param_float(
+                "~tracked_reprojection_depth_edge_thresh",
+                self.tracked_reprojection_depth_edge_thresh,
+            ),
+            lambda value: 0.0 <= value <= 1.0,
+        )
+        _update(
+            "tracked_reprojection_min_image_edge",
+            self._get_live_param_float(
+                "~tracked_reprojection_min_image_edge",
+                self.tracked_reprojection_min_image_edge,
+            ),
+            lambda value: 0.0 <= value <= 1.0,
+        )
+        _update(
+            "tracked_reprojection_min_tracks",
+            self._get_live_param_int(
+                "~tracked_reprojection_min_tracks",
+                self.tracked_reprojection_min_tracks,
+            ),
+            lambda value: value >= 10,
+        )
+
+        if self.debug_project_lidar and self._debug_proj_pub is None:
+            self._debug_proj_pub = rospy.Publisher(
+                self.debug_projected_topic, Image, queue_size=1
+            )
+
+        if changes:
+            self._log.info(
+                "_maybe_refresh_live_tuning_params",
+                "Live tuning update: %s",
+                ", ".join(changes),
+            )
 
     def _metadata_callback(self, msg) -> None:
         try:
@@ -1280,8 +1687,10 @@ class ColoredPclNode:
             return None
         if before is None:
             chosen = after
+            best_dt = abs((stamp - chosen.header.stamp).to_sec())
         elif after is None:
             chosen = before
+            best_dt = abs((stamp - chosen.header.stamp).to_sec())
         else:
             dt = (after.header.stamp - before.header.stamp).to_sec()
             if dt > 0.0:
@@ -1305,9 +1714,14 @@ class ColoredPclNode:
                 )
                 omega = (1.0 - alpha) * omega_b + alpha * omega_a
                 chosen = None
+                best_dt = min(
+                    abs((stamp - before.header.stamp).to_sec()),
+                    abs((after.header.stamp - stamp).to_sec()),
+                )
             else:
                 chosen = before
                 omega = None
+                best_dt = abs((stamp - chosen.header.stamp).to_sec())
         if chosen is not None:
             omega = np.array(
                 [
@@ -1317,9 +1731,9 @@ class ColoredPclNode:
                 ],
                 dtype=float,
             )
+            best_dt = abs((stamp - chosen.header.stamp).to_sec())
         if self.imu_cache_max_dt_sec > 0.0:
-            dt = abs((stamp - (chosen.header.stamp if chosen is not None else before.header.stamp)).to_sec())
-            if dt > self.imu_cache_max_dt_sec:
+            if best_dt > self.imu_cache_max_dt_sec:
                 return None
 
         imu_frame = self.imu_frame or (chosen.header.frame_id if chosen is not None else before.header.frame_id)
@@ -1358,6 +1772,7 @@ class ColoredPclNode:
                 ],
                 dtype=float,
             )
+            best_dt = abs((stamp - chosen.header.stamp).to_sec())
         elif after is None:
             chosen = before
             omega = np.array(
@@ -1376,6 +1791,7 @@ class ColoredPclNode:
                 ],
                 dtype=float,
             )
+            best_dt = abs((stamp - chosen.header.stamp).to_sec())
         else:
             dt = (after.header.stamp - before.header.stamp).to_sec()
             if dt > 0.0:
@@ -1416,6 +1832,10 @@ class ColoredPclNode:
                 omega = (1.0 - alpha) * omega_b + alpha * omega_a
                 accel = (1.0 - alpha) * accel_b + alpha * accel_a
                 chosen = before
+                best_dt = min(
+                    abs((stamp - before.header.stamp).to_sec()),
+                    abs((after.header.stamp - stamp).to_sec()),
+                )
             else:
                 chosen = before
                 omega = np.array(
@@ -1434,9 +1854,9 @@ class ColoredPclNode:
                     ],
                     dtype=float,
                 )
+                best_dt = abs((stamp - chosen.header.stamp).to_sec())
         if self.lidar_imu_cache_max_dt_sec > 0.0:
-            dt = abs((stamp - chosen.header.stamp).to_sec())
-            if dt > self.lidar_imu_cache_max_dt_sec:
+            if best_dt > self.lidar_imu_cache_max_dt_sec:
                 return None
         imu_frame = self.lidar_imu_frame or chosen.header.frame_id
         if not imu_frame:
@@ -1543,42 +1963,113 @@ class ColoredPclNode:
                 )
                 self._lidar_deskew_missing_time_warn_at = now
             return points
-        imu = self._lookup_lidar_imu(scan_stamp)
-        if imu is None:
-            self._lidar_deskew_status = "armed (waiting for IMU)"
-            now = time.time()
-            if now - self._lidar_deskew_warn_at > 2.0:
-                self._log.warn(
-                    "_deskew_lidar_points",
-                    "Deskew enabled but IMU lookup failed; skipping deskew.",
-                )
-                self._lidar_deskew_warn_at = now
-            return points
-        omega, accel = imu
         dt = t_raw.astype(np.float64) * float(self.lidar_time_scale)
-        if self.lidar_deskew_ref == "mid":
-            dt = dt - 0.5 * float(np.nanmax(dt))
+        scan_span = float(np.nanmax(dt)) if dt.size else 0.0
+        ref_offset = 0.5 * scan_span if self.lidar_deskew_ref == "mid" else 0.0
+        rel_dt = dt - ref_offset
+        ref_stamp = scan_stamp + rospy.Duration.from_sec(float(ref_offset))
+        sample_count = min(max(1, int(self.lidar_deskew_imu_samples)), 32)
+        omega_eval = None
+        accel_eval = None
+        if sample_count <= 1 or scan_span <= 1e-9:
+            ref_imu = self._lookup_lidar_imu(ref_stamp)
+            if ref_imu is None:
+                self._lidar_deskew_status = "armed (waiting for IMU)"
+                now = time.time()
+                if now - self._lidar_deskew_warn_at > 2.0:
+                    self._log.warn(
+                        "_deskew_lidar_points",
+                        "Deskew enabled but IMU lookup failed near the selected reference time; skipping deskew.",
+                    )
+                    self._lidar_deskew_warn_at = now
+                return points
+            omega_ref, accel_ref = ref_imu
+            omega_eval = np.repeat(
+                np.asarray(omega_ref, dtype=np.float64).reshape(1, 3),
+                points.shape[0],
+                axis=0,
+            )
+            accel_eval = np.repeat(
+                np.asarray(accel_ref, dtype=np.float64).reshape(1, 3),
+                points.shape[0],
+                axis=0,
+            )
+        else:
+            sample_offsets = np.linspace(0.0, scan_span, sample_count, dtype=np.float64)
+            omega_samples = []
+            accel_samples = []
+            dense_sampling_ok = True
+            for offset in sample_offsets:
+                imu_sample = self._lookup_lidar_imu(
+                    scan_stamp + rospy.Duration.from_sec(float(offset))
+                )
+                if imu_sample is None:
+                    dense_sampling_ok = False
+                    self._lidar_deskew_status = "armed (waiting for dense IMU support)"
+                    now = time.time()
+                    if now - self._lidar_deskew_warn_at > 2.0:
+                        self._log.warn(
+                            "_deskew_lidar_points",
+                            "Deskew requested %d IMU samples across the scan but lookup failed at %.6fs; falling back to the single-sample model.",
+                            sample_count,
+                            float(offset),
+                        )
+                        self._lidar_deskew_warn_at = now
+                    break
+                omega_i, accel_i = imu_sample
+                omega_samples.append(np.asarray(omega_i, dtype=np.float64).reshape(3))
+                accel_samples.append(np.asarray(accel_i, dtype=np.float64).reshape(3))
+            if dense_sampling_ok:
+                omega_samples = np.asarray(omega_samples, dtype=np.float64)
+                accel_samples = np.asarray(accel_samples, dtype=np.float64)
+                sample_rel_dt = sample_offsets - ref_offset
+                if sample_rel_dt.size <= 1:
+                    omega_eval = np.repeat(omega_samples[:1], points.shape[0], axis=0)
+                    accel_eval = np.repeat(accel_samples[:1], points.shape[0], axis=0)
+                else:
+                    boundaries = 0.5 * (sample_rel_dt[:-1] + sample_rel_dt[1:])
+                    sample_idx = np.searchsorted(boundaries, rel_dt, side="right")
+                    sample_idx = np.clip(sample_idx, 0, omega_samples.shape[0] - 1)
+                    omega_eval = omega_samples[sample_idx]
+                    accel_eval = accel_samples[sample_idx]
+            else:
+                ref_imu = self._lookup_lidar_imu(ref_stamp)
+                if ref_imu is None:
+                    self._lidar_deskew_status = "armed (waiting for IMU)"
+                    return points
+                omega_ref, accel_ref = ref_imu
+                omega_eval = np.repeat(
+                    np.asarray(omega_ref, dtype=np.float64).reshape(1, 3),
+                    points.shape[0],
+                    axis=0,
+                )
+                accel_eval = np.repeat(
+                    np.asarray(accel_ref, dtype=np.float64).reshape(1, 3),
+                    points.shape[0],
+                    axis=0,
+                )
         now = time.time()
         self._lidar_deskew_status = "active"
         if now - self._lidar_deskew_log_at > 2.0:
             self._log.info(
                 "_deskew_lidar_points",
-                "Deskew active: mode=%s ref=%s dt_max=%.6f",
+                "Deskew active: mode=%s ref=%s dt_max=%.6f imu_samples=%d",
                 self.lidar_deskew_mode,
                 self.lidar_deskew_ref,
-                float(np.nanmax(dt)) if dt.size else 0.0,
+                scan_span,
+                sample_count,
             )
             self._lidar_deskew_log_at = now
         if self.lidar_deskew_mode in ("rotation", "both"):
-            cross = np.cross(omega.reshape(1, 3), points)
-            points = points - dt.reshape(-1, 1) * cross
+            cross = np.cross(omega_eval, points)
+            points = points - rel_dt.reshape(-1, 1) * cross
         if self.lidar_deskew_mode in ("translation", "both"):
             if not self.lidar_imu_accel_is_gravity_compensated:
                 self._log.warn(
                     "_deskew_lidar_points",
                     "Translation deskew assumes gravity-compensated IMU accel; set ~lidar_imu_accel_gravity_compensated=true if already corrected.",
                 )
-            disp = 0.5 * accel.reshape(1, 3) * (dt.reshape(-1, 1) ** 2)
+            disp = 0.5 * accel_eval * (rel_dt.reshape(-1, 1) ** 2)
             points = points - disp
         return points
 
@@ -1587,6 +2078,21 @@ class ColoredPclNode:
         if mat is None:
             return points
         return transform_points(mat, points)
+
+    def _ensure_cv2(self, context: str) -> bool:
+        if self._cv2 is not None:
+            return True
+        try:
+            import cv2  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            self._log.warn(
+                context,
+                "OpenCV not available (%s); disabling the requested image-space diagnostic.",
+                exc,
+            )
+            return False
+        self._cv2 = cv2
+        return True
 
     def _maybe_init_undistort(self) -> None:
         if not self.undistort_semantic:
@@ -1614,16 +2120,10 @@ class ColoredPclNode:
                 "CameraInfo distortion coefficients are zero; skipping undistort.",
             )
             return
-        try:
-            import cv2  # type: ignore
-        except Exception as exc:  # noqa: BLE001
+        if not self._ensure_cv2("_maybe_init_undistort"):
             self._undistort_status = "disabled (OpenCV unavailable)"
-            self._log.warn(
-                "_maybe_init_undistort",
-                "OpenCV not available (%s); cannot undistort semantic images.",
-                exc,
-            )
             return
+        cv2 = self._cv2
         h, w = self._camera_info_size
         if h <= 0 or w <= 0:
             self._undistort_status = "disabled (invalid CameraInfo image size)"
@@ -1661,7 +2161,6 @@ class ColoredPclNode:
             )
             return
 
-        self._cv2 = cv2
         self._undistort_map1 = map1
         self._undistort_map2 = map2
         self._undistort_active = True
@@ -2282,6 +2781,286 @@ class ColoredPclNode:
         rgb[~valid] = 0
         return rgb
 
+    def _edge_map_to_debug_rgb(self, edge_map: np.ndarray) -> np.ndarray:
+        edge_map = np.asarray(edge_map, dtype=np.float32)
+        edge_map = np.nan_to_num(edge_map, nan=0.0, posinf=0.0, neginf=0.0)
+        if edge_map.size == 0:
+            return np.zeros((0, 0, 3), dtype=np.uint8)
+        edge_norm = np.clip(edge_map, 0.0, 1.0)
+        edge_boost = np.sqrt(edge_norm)
+        rgb = np.zeros(edge_map.shape + (3,), dtype=np.uint8)
+        rgb[..., 0] = np.clip(40.0 * edge_boost, 0.0, 255.0).astype(
+            np.uint8, copy=False
+        )
+        rgb[..., 1] = np.clip(220.0 * edge_boost, 0.0, 255.0).astype(
+            np.uint8, copy=False
+        )
+        rgb[..., 2] = np.clip(255.0 * edge_boost, 0.0, 255.0).astype(
+            np.uint8, copy=False
+        )
+        return rgb
+
+    def _tracked_reprojection_base_and_gray(
+        self,
+        sem_img: np.ndarray,
+        sem_type: str,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        sem_type = (sem_type or "").strip().lower()
+        if sem_type == "labels":
+            labels = np.asarray(sem_img)
+            if labels.ndim == 3:
+                labels = labels[:, :, 0]
+            labels = labels.astype(np.float32, copy=False)
+            if labels.size == 0:
+                base = np.zeros((0, 0, 3), dtype=np.uint8)
+                gray = np.zeros((0, 0), dtype=np.uint8)
+                return base, gray
+            flat = labels.reshape(-1)
+            valid = np.isfinite(flat)
+            scale = float(np.max(flat[valid])) if np.any(valid) else 0.0
+            if scale <= 0.0:
+                scale = 1.0
+            gray = np.clip(255.0 * labels / scale, 0.0, 255.0).astype(
+                np.uint8, copy=False
+            )
+            base = np.stack((gray, gray, gray), axis=-1)
+            return base, gray
+
+        rgb = np.asarray(sem_img)
+        if rgb.ndim != 3 or rgb.shape[2] < 3:
+            h, w = rgb.shape[:2]
+            return np.zeros((h, w, 3), dtype=np.uint8), np.zeros((h, w), dtype=np.uint8)
+        base = np.ascontiguousarray(rgb[:, :, :3].astype(np.uint8, copy=False))
+        gray_f = (
+            (0.299 * base[:, :, 0])
+            + (0.587 * base[:, :, 1])
+            + (0.114 * base[:, :, 2])
+        )
+        gray = np.clip(gray_f, 0.0, 255.0).astype(np.uint8, copy=False)
+        return base, gray
+
+    def _detect_tracked_reprojection_features(
+        self,
+        gray: np.ndarray,
+        *,
+        existing_pts: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        if not self._ensure_cv2("_detect_tracked_reprojection_features"):
+            return np.empty((0, 1, 2), dtype=np.float32)
+        cv2 = self._cv2
+        gray = np.ascontiguousarray(np.asarray(gray, dtype=np.uint8))
+        max_corners = int(self.tracked_reprojection_max_corners)
+        if existing_pts is not None and existing_pts.size:
+            remaining = max(0, max_corners - int(existing_pts.shape[0]))
+        else:
+            remaining = max_corners
+        if remaining <= 0:
+            return np.empty((0, 1, 2), dtype=np.float32)
+
+        mask = np.full(gray.shape, 255, dtype=np.uint8)
+        if existing_pts is not None and existing_pts.size:
+            radius = max(2, int(round(self.tracked_reprojection_min_distance_px)))
+            for pt in np.asarray(existing_pts, dtype=np.float32).reshape(-1, 2):
+                cv2.circle(
+                    mask,
+                    (int(round(pt[0])), int(round(pt[1]))),
+                    radius,
+                    0,
+                    thickness=-1,
+                )
+        pts = cv2.goodFeaturesToTrack(
+            gray,
+            maxCorners=int(remaining),
+            qualityLevel=float(self.tracked_reprojection_quality_level),
+            minDistance=float(self.tracked_reprojection_min_distance_px),
+            mask=mask,
+        )
+        if pts is None:
+            return np.empty((0, 1, 2), dtype=np.float32)
+        return np.asarray(pts, dtype=np.float32).reshape(-1, 1, 2)
+
+    def _reset_tracked_reprojection_state(self, gray: np.ndarray) -> None:
+        gray = np.ascontiguousarray(np.asarray(gray, dtype=np.uint8))
+        self._tracked_reprojection_prev_gray = gray
+        self._tracked_reprojection_prev_pts = self._detect_tracked_reprojection_features(
+            gray
+        )
+
+    def _publish_tracked_reprojection_debug(
+        self,
+        *,
+        sem_img: np.ndarray,
+        sem_type: str,
+        points: np.ndarray,
+        intrinsics: np.ndarray,
+        camera_T_lidar: np.ndarray,
+        image_shape: Tuple[int, int],
+        header,
+    ) -> None:
+        if (
+            not self.tracked_reprojection_enable
+            or self._debug_tracked_reprojection_pub is None
+            or self._debug_tracked_reprojection_error_pub is None
+        ):
+            return
+        if not self._ensure_cv2("_publish_tracked_reprojection_debug"):
+            self.tracked_reprojection_enable = False
+            return
+        cv2 = self._cv2
+        base_rgb, gray = self._tracked_reprojection_base_and_gray(sem_img, sem_type)
+        if gray.size == 0:
+            return
+        if (
+            self._tracked_reprojection_prev_gray is None
+            or self._tracked_reprojection_prev_pts is None
+            or self._tracked_reprojection_prev_gray.shape != gray.shape
+        ):
+            self._reset_tracked_reprojection_state(gray)
+            return
+        prev_pts = np.asarray(self._tracked_reprojection_prev_pts, dtype=np.float32)
+        if prev_pts.size == 0:
+            self._reset_tracked_reprojection_state(gray)
+            return
+
+        lk_kwargs = dict(
+            winSize=(21, 21),
+            maxLevel=3,
+            criteria=(
+                cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
+                30,
+                0.01,
+            ),
+        )
+        next_pts, status, _ = cv2.calcOpticalFlowPyrLK(
+            self._tracked_reprojection_prev_gray,
+            gray,
+            prev_pts,
+            None,
+            **lk_kwargs,
+        )
+        if next_pts is None or status is None:
+            self._reset_tracked_reprojection_state(gray)
+            return
+        back_pts, back_status, _ = cv2.calcOpticalFlowPyrLK(
+            gray,
+            self._tracked_reprojection_prev_gray,
+            next_pts,
+            None,
+            **lk_kwargs,
+        )
+        if back_pts is None or back_status is None:
+            self._reset_tracked_reprojection_state(gray)
+            return
+
+        prev_xy = prev_pts.reshape(-1, 2)
+        next_xy = np.asarray(next_pts, dtype=np.float32).reshape(-1, 2)
+        back_xy = np.asarray(back_pts, dtype=np.float32).reshape(-1, 2)
+        fb_err = np.linalg.norm(prev_xy - back_xy, axis=1)
+        valid = status.reshape(-1).astype(bool) & back_status.reshape(-1).astype(bool)
+        valid &= np.isfinite(next_xy).all(axis=1)
+        valid &= np.isfinite(fb_err)
+        valid &= fb_err <= float(self.tracked_reprojection_fb_thresh_px)
+        valid &= next_xy[:, 0] >= 0.0
+        valid &= next_xy[:, 0] < float(gray.shape[1])
+        valid &= next_xy[:, 1] >= 0.0
+        valid &= next_xy[:, 1] < float(gray.shape[0])
+        if not np.any(valid):
+            self._reset_tracked_reprojection_state(gray)
+            return
+
+        prev_xy = prev_xy[valid]
+        next_xy = next_xy[valid]
+        px = np.clip(
+            np.round(next_xy[:, 0]).astype(np.int32),
+            0,
+            int(gray.shape[1]) - 1,
+        )
+        py = np.clip(
+            np.round(next_xy[:, 1]).astype(np.int32),
+            0,
+            int(gray.shape[0]) - 1,
+        )
+        sem_edges = self._semantic_edge_map(sem_img, sem_type)
+        img_edge_strength = np.asarray(sem_edges[py, px], dtype=np.float32)
+        edge_keep = img_edge_strength >= float(self.tracked_reprojection_min_image_edge)
+        if np.any(edge_keep):
+            prev_xy = prev_xy[edge_keep]
+            next_xy = next_xy[edge_keep]
+            px = px[edge_keep]
+            py = py[edge_keep]
+        if next_xy.shape[0] == 0:
+            self._reset_tracked_reprojection_state(gray)
+            return
+
+        depth_map = self._rasterize_lidar_depth_map(
+            points,
+            intrinsics,
+            camera_T_lidar,
+            image_shape,
+        )
+        depth_edges = self._depth_map_to_edge_map(depth_map)
+        edge_mask = depth_edges >= float(self.tracked_reprojection_depth_edge_thresh)
+        if not np.any(edge_mask):
+            self._reset_tracked_reprojection_state(gray)
+            return
+
+        dt_input = np.ones(edge_mask.shape, dtype=np.uint8)
+        dt_input[edge_mask] = 0
+        dist_map = cv2.distanceTransform(dt_input, cv2.DIST_L2, 3)
+        reproj_error_px = np.asarray(dist_map[py, px], dtype=np.float32)
+        error_value = float(np.median(reproj_error_px)) if reproj_error_px.size else float("nan")
+
+        overlay = np.ascontiguousarray(base_rgb.copy())
+        edge_tint = np.array([0, 255, 255], dtype=np.float32)
+        overlay_f = overlay.astype(np.float32, copy=False)
+        overlay_f[edge_mask] = 0.45 * overlay_f[edge_mask] + 0.55 * edge_tint
+        overlay = np.clip(overlay_f, 0.0, 255.0).astype(np.uint8, copy=False)
+
+        for (p_prev, p_cur, err_px) in zip(prev_xy, next_xy, reproj_error_px):
+            if err_px <= 1.0:
+                color = (0, 255, 0)
+            elif err_px <= 3.0:
+                color = (255, 255, 0)
+            else:
+                color = (255, 0, 0)
+            start = (int(round(p_prev[0])), int(round(p_prev[1])))
+            end = (int(round(p_cur[0])), int(round(p_cur[1])))
+            cv2.line(overlay, start, end, color, 1, lineType=cv2.LINE_AA)
+            cv2.circle(overlay, end, 2, color, thickness=-1, lineType=cv2.LINE_AA)
+
+        self._publish_debug_rgb_image(
+            self._debug_tracked_reprojection_pub,
+            overlay,
+            header,
+        )
+        self._debug_tracked_reprojection_error_pub.publish(
+            Float32(data=float(error_value if np.isfinite(error_value) else 0.0))
+        )
+
+        refreshed_pts = next_xy.reshape(-1, 1, 2).astype(np.float32, copy=False)
+        if refreshed_pts.shape[0] < int(self.tracked_reprojection_min_tracks):
+            extra_pts = self._detect_tracked_reprojection_features(
+                gray, existing_pts=refreshed_pts
+            )
+            if extra_pts.size:
+                refreshed_pts = np.concatenate((refreshed_pts, extra_pts), axis=0)
+        if refreshed_pts.shape[0] > int(self.tracked_reprojection_max_corners):
+            refreshed_pts = refreshed_pts[: int(self.tracked_reprojection_max_corners)]
+        self._tracked_reprojection_prev_gray = gray
+        self._tracked_reprojection_prev_pts = refreshed_pts
+
+        now = time.time()
+        period = float(self.tracked_reprojection_log_period_sec)
+        if period == 0.0 or (now - self._tracked_reprojection_last_log_at) >= period:
+            self._log.info(
+                "_publish_tracked_reprojection_debug",
+                "tracked reprojection: median_err_px=%.3f tracks=%d depth_edge_pixels=%d",
+                float(error_value if np.isfinite(error_value) else 0.0),
+                int(reproj_error_px.size),
+                int(np.count_nonzero(edge_mask)),
+            )
+            self._tracked_reprojection_last_log_at = now
+
     def _rasterize_lidar_depth_map(
         self,
         points: np.ndarray,
@@ -2852,7 +3631,7 @@ class ColoredPclNode:
         )
         self._publish_debug_rgb_image(
             self._debug_edge_pub,
-            self._float_map_to_heatmap_rgb(depth_edges),
+            self._edge_map_to_debug_rgb(depth_edges),
             header,
         )
         self._publish_debug_rgb_image(
@@ -3215,6 +3994,7 @@ class ColoredPclNode:
     def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("lidar_callback"):
+            self._maybe_refresh_live_tuning_params()
             sem_stamp = sem_msg.header.stamp
             lidar_stamp = lidar_msg.header.stamp
             sem_pair_stamp = self._apply_stamp_offset(
@@ -3555,6 +4335,16 @@ class ColoredPclNode:
                     u=debug_u,
                     v=debug_v,
                     point_confidence=debug_point_conf,
+                    header=sem_msg.header,
+                )
+            if self.tracked_reprojection_enable and semantic_debug_img is not None:
+                self._publish_tracked_reprojection_debug(
+                    sem_img=semantic_debug_img,
+                    sem_type=semantic_debug_type,
+                    points=points,
+                    intrinsics=intrinsics,
+                    camera_T_lidar=corrected_camera_T_lidar,
+                    image_shape=(h, w),
                     header=sem_msg.header,
                 )
 

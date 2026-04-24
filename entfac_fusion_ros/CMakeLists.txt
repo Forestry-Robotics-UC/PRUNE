@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.0.2)
 project(entfac_fusion_ros)
 
 find_package(catkin REQUIRED COMPONENTS
+  dynamic_reconfigure
   geometry_msgs
   nav_msgs
   rospy
@@ -15,8 +16,13 @@ find_package(catkin REQUIRED COMPONENTS
 
 catkin_python_setup()
 
+generate_dynamic_reconfigure_options(
+  cfg/ColoredPclTuning.cfg
+)
+
 catkin_package(
   CATKIN_DEPENDS
+    dynamic_reconfigure
     geometry_msgs
     nav_msgs
     rospy
@@ -36,6 +42,10 @@ catkin_install_python(
 )
 
 install(DIRECTORY launch config
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+)
+
+install(DIRECTORY cfg
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 

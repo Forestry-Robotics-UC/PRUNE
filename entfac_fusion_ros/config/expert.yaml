@@ -14,6 +14,7 @@ metadata_max_dt_sec: 0.1       # max dt between metadata and semantic frame
 lidar_deskew_enable: false     # enable LiDAR deskew using per-point time + IMU
 lidar_deskew_mode: "rotation"  # rotation | translation | both
 lidar_deskew_ref: "start"      # start or mid
+lidar_deskew_imu_samples: 1    # IMU samples across each scan for deskew; >1 improves fast-motion correction at higher CPU cost
 lidar_time_field: "t"          # per-point time field name in PointCloud2
 lidar_time_scale: 1.0e-9       # scale to seconds (ns -> 1e-9)
 lidar_imu_topic: ""            # IMU topic for LiDAR deskew
@@ -23,8 +24,8 @@ lidar_imu_cache_max_dt_sec: 0.02 # max dt between LiDAR scan time and IMU
 lidar_imu_accel_gravity_compensated: true # IMU linear acceleration is gravity-compensated
 
 # Online LiDAR-camera calibration health + lightweight correction (classical/KISS).
-online_calibration_enable: false           # enable online misalignment estimation and projection correction (lidar mode only)
-online_calibration_every_n_frames: 10      # run update every N lidar callbacks
+online_calibration_enable: false           # keep disabled until observability is strong enough for stable updates
+online_calibration_every_n_frames: 100      # run update every N lidar callbacks
 online_calibration_max_points: 8000        # max lidar points used per update (uniform stride subsampling above this)
 online_calibration_edge_threshold: 0.20    # edge threshold for observability density checks
 online_calibration_step_deg: 0.20          # finite-difference perturbation step in degrees
@@ -40,6 +41,16 @@ online_calibration_health_std_scale: 0.08  # scale that maps score std to stabil
 online_calibration_health_score_center: 0.25 # alignment-score logistic midpoint for health
 online_calibration_health_score_scale: 0.10 # alignment-score logistic scale for health
 online_calibration_log_period_sec: 2.0     # seconds between online calibration status logs (0 disables periodic logs)
+
+tracked_reprojection_enable: false          # stateful feature-tracked LiDAR reprojection diagnostic; best used offline on rosbags
+tracked_reprojection_max_corners: 300       # max tracked image features
+tracked_reprojection_quality_level: 0.01    # Shi-Tomasi quality level for feature detection
+tracked_reprojection_min_distance_px: 8.0   # minimum spacing between tracked features
+tracked_reprojection_min_tracks: 80         # replenish features when active tracks drop below this count
+tracked_reprojection_fb_thresh_px: 1.0      # forward-backward optical-flow consistency gate in pixels
+tracked_reprojection_depth_edge_thresh: 0.10 # normalized LiDAR depth-edge threshold used for the reprojection target
+tracked_reprojection_min_image_edge: 0.08   # minimum image-edge strength required for a tracked feature to affect the metric
+tracked_reprojection_log_period_sec: 2.0    # seconds between tracked reprojection status logs (0 logs every callback)
 
 enable_profiling: false
 

@@ -40,6 +40,7 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~imu_topic` | `str` | `''` | IMU topic used for rolling shutter correction (sensor_msgs/Imu). |
 | `~include_unlabeled_pts` | `bool` | `false` | If true, keep points outside the camera FOV (label=-1). |
 | `~lidar_deskew_enable` | `bool` | `false` | Enable LiDAR deskew using per-point time + IMU. |
+| `~lidar_deskew_imu_samples` | `int` | `1` | Number of IMU samples used across each scan for LiDAR deskew (1 keeps the lightweight single-sample model; values >1 better handle fast motion). |
 | `~lidar_deskew_mode` | `str` | `'rotation'` | Deskew mode: rotation, translation, or both. |
 | `~lidar_deskew_ref` | `str` | `'start'` | Deskew reference time: start or mid (scan start recommended). |
 | `~lidar_imu_accel_gravity_compensated` | `bool` | `true` | If true, IMU linear_acceleration is gravity-compensated (recommended). |
@@ -100,5 +101,14 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~sync_queue_size` | `int` | `5` | ApproximateTimeSynchronizer queue size for semantic/depth or semantic/lidar pairing. |
 | `~sync_slop_sec` | `float` | `0.1` | ApproximateTimeSynchronizer slop in seconds for semantic/depth or semantic/lidar pairing. |
 | `~target_frame` | `str` | `'base_link'` | Output frame for published semantic point cloud. |
+| `~tracked_reprojection_depth_edge_thresh` | `float` | `0.15` | Normalized LiDAR depth-edge threshold used to convert the projected depth map into an edge target for tracked reprojection. |
+| `~tracked_reprojection_enable` | `bool` | `false` | Enable stateful feature-tracked LiDAR reprojection diagnostics. This is heavier than the online edge score and is intended mainly for offline rosbag review. |
+| `~tracked_reprojection_fb_thresh_px` | `float` | `1.5` | Forward-backward optical-flow consistency threshold in pixels. |
+| `~tracked_reprojection_log_period_sec` | `float` | `2.0` | Minimum seconds between tracked reprojection status logs. |
+| `~tracked_reprojection_max_corners` | `int` | `300` | Maximum number of tracked image features used by the tracked reprojection diagnostic. |
+| `~tracked_reprojection_min_distance_px` | `float` | `8.0` | Minimum pixel spacing between tracked reprojection features. |
+| `~tracked_reprojection_min_image_edge` | `float` | `0.05` | Minimum image-edge strength required for a tracked feature to contribute to the reprojection error metric. |
+| `~tracked_reprojection_min_tracks` | `int` | `80` | Minimum number of active tracks to maintain before replenishing features. |
+| `~tracked_reprojection_quality_level` | `float` | `0.01` | Shi-Tomasi quality level for tracked reprojection feature detection. |
 | `~undistort_alpha` | `float` | `0.0` | Undistort balance/alpha in [0,1]; 0=crop to valid pixels, 1=keep all pixels. |
 | `~undistort_semantic` | `bool` | `false` | If true, undistort semantic images using CameraInfo distortion before projection (lidar mode only). |

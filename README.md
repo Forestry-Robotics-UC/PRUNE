@@ -130,6 +130,28 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
 - A ready-to-tune overlay exists at:
   - `entfac_fusion_ros/config/curt_mini_calibration_debug.yaml`
 
+### Offline tracked reprojection diagnostic
+- `tracked_reprojection_enable` adds a stateful feature-tracking diagnostic in LiDAR mode.
+- It tracks image features across frames and reports a LiDAR reprojection error against projected depth edges.
+- Debug topics:
+  - `/debug/tracked_reprojection` (`sensor_msgs/Image`)
+  - `/debug/tracked_reprojection_error_px` (`std_msgs/Float32`, lower is better)
+- This path is heavier than the normal online fusion/debug loop and is intended mainly for rosbag validation runs.
+
+### Live tuning with `rqt_reconfigure`
+- `colored_pcl_node` exposes the safe runtime tuning knobs through ROS1 `dynamic_reconfigure`.
+- Live-tunable groups:
+  - `Projection`: `projection_*` gating parameters used by LiDAR-to-image transfer.
+  - `DebugProjection`: `debug_project_lidar*` overlay controls.
+  - `TrackedReprojection`: `tracked_reprojection_fb_thresh_px`, `tracked_reprojection_depth_edge_thresh`, `tracked_reprojection_min_image_edge`, `tracked_reprojection_min_tracks`.
+- Rebuild the catkin workspace after adding the generated dynamic-reconfigure config:
+  ```bash
+  catkin build entfac_fusion_ros
+  source devel/setup.bash
+  rosrun rqt_reconfigure rqt_reconfigure
+  ```
+- In `rqt_reconfigure`, open `/colored_pcl_node` and tune the parameters live while the node is running.
+
 ## Extrinsics options
 - Use TF/URDF: provide proper static transforms for camera ↔ depth ↔ target frames.
 - Or provide static 4×4 row-major matrices via params:
