@@ -4,6 +4,9 @@ semantic_input_type: "labels"  # "labels" or "rgb" (original colors)
 undistort_semantic: false      # undistort semantic image using CameraInfo distortion (lidar mode only)
 undistort_alpha: 0.0           # 0=crop to valid pixels, 1=keep all pixels
 confidence_topic: ""          # optional
+projection_invalid_mask_topic: "" # optional invalid-mask topic aligned with semantic_topic (0=valid, projection_invalid_mask_value=invalid)
+projection_invalid_mask_value: 255 # pixel value in projection_invalid_mask_topic that rejects transferred semantics/RGB
+projection_invalid_mask_dilate_px: 0 # dilation radius applied to the invalid mask before projection sampling
 camera_info: "/camera/color/camera_info"  # CameraInfo topic (used when camera_info_txt is empty)
 camera_info_txt: ""           # optional calibration file path; if set, intrinsics load from file
 camera_frame: ""              # optional fallback frame_id used with camera_info_txt when file has no frame_id

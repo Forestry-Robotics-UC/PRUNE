@@ -81,6 +81,9 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~projection_confidence_min` | `float` | `0.0` | Minimum patch confidence required to trust transferred image color/label (0 disables). |
 | `~projection_depth_edge_radius_px` | `int` | `0` | Pixel radius used to dilate the LiDAR depth-edge reject mask (helps suppress sky bleed near thin objects). |
 | `~projection_depth_edge_thresh` | `float` | `0.15` | Normalized depth-edge threshold used when ~projection_reject_depth_edges is enabled. |
+| `~projection_invalid_mask_dilate_px` | `int` | `0` | Optional dilation radius in pixels applied to the invalid mask before projection sampling. |
+| `~projection_invalid_mask_topic` | `str` | `''` | Optional single-channel invalid-mask image topic aligned with ~semantic_topic; pixels equal to ~projection_invalid_mask_value reject transferred labels/RGB. |
+| `~projection_invalid_mask_value` | `int` | `255` | Pixel value in ~projection_invalid_mask_topic that marks invalid/rejected samples. |
 | `~projection_occlusion_epsilon_m` | `float` | `0.0` | Allow image transfer only when the point depth is within this margin of the nearest LiDAR depth at that pixel (meters, 0 disables). |
 | `~projection_occlusion_radius_px` | `int` | `0` | Pixel radius for local min-depth occlusion gating (0 uses only the exact projected pixel). |
 | `~projection_patch_size` | `int` | `1` | Odd patch size for robust LiDAR-to-image sampling (1=center pixel, 3=3x3, 5=5x5). |

@@ -172,6 +172,15 @@ def render_startup_table(node) -> str:
         ("semantic_topic", node.semantic_topic),
         ("semantic_type", node.semantic_input_type),
         ("confidence_topic", node.conf_topic or "-"),
+        ("projection_invalid_mask_topic", node.projection_invalid_mask_topic or "-"),
+        (
+            "projection_invalid_mask_value",
+            str(int(node.projection_invalid_mask_value)),
+        ),
+        (
+            "projection_invalid_mask_dilate_px",
+            str(int(node.projection_invalid_mask_dilate_px)),
+        ),
         ("camera_info_source", node._camera_info_source or "-"),
         ("camera_info", node.camera_info_topic or "-"),
         ("camera_info_txt", node.camera_info_txt or "-"),

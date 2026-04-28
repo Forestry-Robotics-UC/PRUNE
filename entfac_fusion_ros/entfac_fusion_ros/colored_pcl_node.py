@@ -58,6 +58,9 @@ Optional:
       ``~camera_info_txt`` when the file does not include one.
   - ``~confidence_topic`` (``sensor_msgs/Image``): confidence/probability aligned
     with semantic labels (single-channel numeric).
+  - ``~projection_invalid_mask_topic`` (``sensor_msgs/Image``): optional
+    single-channel invalid mask aligned with ``~semantic_topic``. Invalid pixels
+    reject transferred labels/RGB and zero confidence.
 
 Publications
 ^^^^^^^^^^^^
@@ -149,6 +152,11 @@ from entfac_fusion_core.types import (
     PointObservation,
     SemanticObservation,
     SemanticPointCloud,
+)
+from entfac_fusion_core.utils.masks import (
+    apply_invalid_projection_samples,
+    invalid_image_to_mask,
+    sample_invalid_mask,
 )
 from entfac_fusion_core.utils.semantics import packed_rgb_to_triplets
 from entfac_fusion_core.utils.validation import (
@@ -547,6 +555,26 @@ class ColoredPclNode:
         )
         if not 0.0 <= self.projection_confidence_min <= 1.0:
             raise ValueError("~projection_confidence_min must be in [0, 1]")
+        self.projection_invalid_mask_topic = self._get_param_str(
+            "~projection_invalid_mask_topic",
+            "",
+            "Optional single-channel invalid-mask image topic aligned with ~semantic_topic; pixels equal to ~projection_invalid_mask_value reject transferred labels/RGB.",
+            allow_empty=True,
+        )
+        self.projection_invalid_mask_value = self._get_param_int(
+            "~projection_invalid_mask_value",
+            255,
+            "Pixel value in ~projection_invalid_mask_topic that marks invalid/rejected samples.",
+        )
+        if not 0 <= self.projection_invalid_mask_value <= 65535:
+            raise ValueError("~projection_invalid_mask_value must be in [0, 65535]")
+        self.projection_invalid_mask_dilate_px = self._get_param_int(
+            "~projection_invalid_mask_dilate_px",
+            0,
+            "Optional dilation radius in pixels applied to the invalid mask before projection sampling.",
+        )
+        if self.projection_invalid_mask_dilate_px < 0:
+            raise ValueError("~projection_invalid_mask_dilate_px must be >= 0")
         self.projection_occlusion_epsilon_m = self._get_param_float(
             "~projection_occlusion_epsilon_m",
             0.0,
@@ -1268,6 +1296,15 @@ class ColoredPclNode:
             if self.conf_topic
             else None
         )
+        invalid_mask_sub = (
+            Subscriber(
+                self.projection_invalid_mask_topic,
+                Image,
+                queue_size=self.sync_queue_size,
+            )
+            if self.projection_invalid_mask_topic
+            else None
+        )
         self._rolling_shutter_status = (
             "disabled" if not self._rolling_shutter_requested else "requested"
         )
@@ -1330,30 +1367,65 @@ class ColoredPclNode:
             subs = [semantic_sub, depth_sub]
             if conf_sub is not None:
                 subs.append(conf_sub)
+            if invalid_mask_sub is not None:
+                subs.append(invalid_mask_sub)
             sync = ApproximateTimeSynchronizer(
                 subs, queue_size=self.sync_queue_size, slop=self.sync_slop_sec
             )
-            sync.registerCallback(self._depth_callback)
+            if conf_sub is not None and invalid_mask_sub is not None:
+                sync.registerCallback(self._depth_callback)
+            elif conf_sub is not None:
+                sync.registerCallback(
+                    lambda sem, depth, conf: self._depth_callback(
+                        sem, depth, conf, None
+                    )
+                )
+            elif invalid_mask_sub is not None:
+                sync.registerCallback(
+                    lambda sem, depth, invalid_mask: self._depth_callback(
+                        sem, depth, None, invalid_mask
+                    )
+                )
+            else:
+                sync.registerCallback(self._depth_callback)
             self._sync = sync
         else:
             lidar_sub = Subscriber(self.depth_input_topic, PointCloud2)
             subs = [semantic_sub, lidar_sub]
             if conf_sub is not None:
                 subs.append(conf_sub)
+            if invalid_mask_sub is not None:
+                subs.append(invalid_mask_sub)
             sync = ApproximateTimeSynchronizer(
                 subs, queue_size=self.sync_queue_size, slop=self.sync_slop_sec
             )
-            sync.registerCallback(self._lidar_callback)
+            if conf_sub is not None and invalid_mask_sub is not None:
+                sync.registerCallback(self._lidar_callback)
+            elif conf_sub is not None:
+                sync.registerCallback(
+                    lambda sem, lidar, conf: self._lidar_callback(
+                        sem, lidar, conf, None
+                    )
+                )
+            elif invalid_mask_sub is not None:
+                sync.registerCallback(
+                    lambda sem, lidar, invalid_mask: self._lidar_callback(
+                        sem, lidar, None, invalid_mask
+                    )
+                )
+            else:
+                sync.registerCallback(self._lidar_callback)
             self._sync = sync
 
         self._log.debug(
             "_register_subscribers",
-            "Registering subscribers (mode=%s): semantic=%s depth=%s lidar=%s confidence=%s",
+            "Registering subscribers (mode=%s): semantic=%s depth=%s lidar=%s confidence=%s invalid_mask=%s",
             self.mode,
             self.semantic_topic,
             self.depth_input_topic,
             self.depth_input_topic,
             self.conf_topic,
+            self.projection_invalid_mask_topic or "",
         )
 
     def _setup_dynamic_reconfigure(self) -> None:
@@ -2612,6 +2684,28 @@ class ColoredPclNode:
             quantize_step=int(self.semantic_color_quantization_step),
         )
 
+    def _parse_projection_invalid_mask(
+        self,
+        msg,
+        expected_shape: Tuple[int, int],
+    ) -> Optional[np.ndarray]:
+        if msg is None:
+            return None
+        data = image_to_numpy(msg)
+        if self._undistort_active:
+            data = self._undistort_array(data, interpolation="nearest")
+        invalid = invalid_image_to_mask(
+            data,
+            invalid_value=int(self.projection_invalid_mask_value),
+            dilate_px=int(self.projection_invalid_mask_dilate_px),
+        )
+        if invalid.shape != tuple(expected_shape):
+            raise ValueError(
+                "projection invalid mask shape "
+                f"{invalid.shape} must match semantic image shape {tuple(expected_shape)}"
+            )
+        return invalid
+
     def _publish_lidar_projection_debug(
         self, base_rgb, image_shape, uv, header, colors_u8=None
     ):
@@ -3793,7 +3887,7 @@ class ColoredPclNode:
     def _render_startup_table(self) -> str:
         return _render_startup_table_helper(self)
 
-    def _depth_callback(self, sem_msg, depth_msg, conf_msg=None):
+    def _depth_callback(self, sem_msg, depth_msg, conf_msg=None, invalid_mask_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("depth_callback"):
             sem_stamp = sem_msg.header.stamp
@@ -3871,6 +3965,11 @@ class ColoredPclNode:
             confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
             if confidence is not None and self._undistort_active:
                 confidence = self._undistort_array(confidence, interpolation="linear")
+            semantic_shape = labels.shape if labels is not None else packed_img.shape
+            projection_invalid_mask = self._parse_projection_invalid_mask(
+                invalid_mask_msg,
+                semantic_shape,
+            )
 
             if self.downsample_factor > 1:
                 f = self.downsample_factor
@@ -3879,8 +3978,12 @@ class ColoredPclNode:
                 else:
                     packed_img = packed_img[::f, ::f]
                 depth_raw = depth_raw[::f, ::f]
+                if invalid_raw is not None:
+                    invalid_raw = invalid_raw[::f, ::f]
                 if confidence is not None:
                     confidence = confidence[::f, ::f]
+                if projection_invalid_mask is not None:
+                    projection_invalid_mask = projection_invalid_mask[::f, ::f]
                 intrinsics = self._scale_intrinsics(self.intrinsics, f)
             else:
                 intrinsics = self.intrinsics
@@ -3929,6 +4032,12 @@ class ColoredPclNode:
                 self._logged_depth_summary = True
 
             if self.semantic_input_type == "labels":
+                if projection_invalid_mask is not None:
+                    labels = labels.copy()
+                    labels[projection_invalid_mask] = -1
+                    if confidence is not None:
+                        confidence = confidence.copy()
+                        confidence[projection_invalid_mask] = 0.0
                 semantic_obs = SemanticObservation(labels=labels, confidence=confidence)
                 depth_obs = DepthObservation(depth=depth)
                 pcl = fuse_depth_semantics(
@@ -3956,12 +4065,22 @@ class ColoredPclNode:
                         if confidence is not None
                         else None
                     )
+                    invalid_flat = (
+                        flatten_masked(projection_invalid_mask, valid_mask)
+                        if projection_invalid_mask is not None
+                        else None
+                    )
+                    if conf_flat is not None and invalid_flat is not None:
+                        conf_flat = conf_flat.astype(np.float32, copy=True)
+                        conf_flat[invalid_flat] = 0.0
                     points_target = transform_points(target_T_depth, points_cam)
                     pcl = SemanticPointCloud(points_target, labels_all, conf_flat)
                     if include_rgb:
                         colors_packed = packed_img[valid_mask].reshape(-1).astype(
-                            np.uint32, copy=False
+                            np.uint32, copy=True
                         )
+                        if invalid_flat is not None:
+                            colors_packed[invalid_flat] = 0
                         rgb_values = colors_packed.astype("<u4", copy=False).view("<f4")
 
             if include_rgb and rgb_values is None and rgb_lut is not None:
@@ -3991,7 +4110,7 @@ class ColoredPclNode:
         dt = time.perf_counter() - t0
         self._maybe_emit_status(points=int(pcl.points_xyz.shape[0]), callback_sec=dt)
 
-    def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None):
+    def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None, invalid_mask_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("lidar_callback"):
             self._maybe_refresh_live_tuning_params()
@@ -4080,6 +4199,11 @@ class ColoredPclNode:
                     self._warned_rgb_color_map = True
 
             confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
+            semantic_shape = labels.shape if labels is not None else packed_img.shape
+            projection_invalid_mask = self._parse_projection_invalid_mask(
+                invalid_mask_msg,
+                semantic_shape,
+            )
             if self.downsample_factor > 1:
                 f = self.downsample_factor
                 if labels is not None:
@@ -4088,6 +4212,8 @@ class ColoredPclNode:
                     packed_img = packed_img[::f, ::f]
                 if confidence is not None:
                     confidence = confidence[::f, ::f]
+                if projection_invalid_mask is not None:
+                    projection_invalid_mask = projection_invalid_mask[::f, ::f]
                 intrinsics = self._scale_intrinsics(self.intrinsics, f)
             else:
                 intrinsics = self.intrinsics
@@ -4171,6 +4297,11 @@ class ColoredPclNode:
                         confidence=confidence,
                         patch_size=self.projection_patch_size,
                     )
+                    invalid_samples = (
+                        sample_invalid_mask(projection_invalid_mask, u, v)
+                        if projection_invalid_mask is not None
+                        else None
+                    )
                     keep_semantics = self._compute_projection_quality_mask(
                         points_all=points,
                         points_selected=labeled_points,
@@ -4181,11 +4312,13 @@ class ColoredPclNode:
                         v=v,
                         point_confidence=conf_in,
                     )
-                    labels_in = labels_in.astype(np.int64, copy=False)
-                    labels_in[~keep_semantics] = -1
-                    if conf_in is not None:
-                        conf_in = conf_in.astype(np.float32, copy=False)
-                        conf_in[~keep_semantics] = 0.0
+                    if invalid_samples is not None:
+                        keep_semantics &= ~invalid_samples
+                    labels_in, conf_in, _ = apply_invalid_projection_samples(
+                        ~keep_semantics,
+                        labels=labels_in.astype(np.int64, copy=False),
+                        confidence=conf_in,
+                    )
                     debug_u = u.astype(np.int32, copy=False)
                     debug_v = v.astype(np.int32, copy=False)
                     debug_point_conf = conf_in
@@ -4271,6 +4404,11 @@ class ColoredPclNode:
                     confidence=confidence,
                     patch_size=self.projection_patch_size,
                 )
+                invalid_samples = (
+                    sample_invalid_mask(projection_invalid_mask, u, v)
+                    if projection_invalid_mask is not None
+                    else None
+                )
                 keep_rgb = self._compute_projection_quality_mask(
                     points_all=points,
                     points_selected=points_in,
@@ -4281,14 +4419,17 @@ class ColoredPclNode:
                     v=v,
                     point_confidence=conf_in,
                 )
-                if conf_in is not None:
-                    conf_in = conf_in.astype(np.float32, copy=False)
-                    conf_in[~keep_rgb] = 0.0
+                if invalid_samples is not None:
+                    keep_rgb &= ~invalid_samples
+                _, conf_in, rgb_values_in = apply_invalid_projection_samples(
+                    ~keep_rgb,
+                    confidence=conf_in,
+                    rgb_values=rgb_values_in,
+                )
                 if not include_rgb:
                     rgb_values_in = None
                 elif rgb_values_in is not None:
                     rgb_values_in = np.asarray(rgb_values_in, dtype=np.float32)
-                    rgb_values_in[~keep_rgb] = 0.0
                 debug_u = u.astype(np.int32, copy=False)
                 debug_v = v.astype(np.int32, copy=False)
                 debug_point_conf = conf_in

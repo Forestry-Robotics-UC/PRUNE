@@ -16,6 +16,10 @@ Only these interfaces are considered stable.
   - `entfac_fusion_core.utils.validation.ensure_float_matrix`
   - `entfac_fusion_core.utils.validation.require_homogeneous_transform`
   - `entfac_fusion_core.utils.validation.flatten_masked`
+- Mask helpers:
+  - `entfac_fusion_core.utils.masks.invalid_image_to_mask`
+  - `entfac_fusion_core.utils.masks.sample_invalid_mask`
+  - `entfac_fusion_core.utils.masks.apply_invalid_projection_samples`
 
 ## `entfac_fusion_ros` (ROS1 Noetic)
 

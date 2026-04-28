@@ -110,8 +110,6 @@ Main integration points:
   `entfac_fusion_ros/colored_pcl_node.py`
 - Tunable parameters:
   `entfac_fusion_ros/config/expert.yaml`
-- Debug dataset overlay:
-  `entfac_fusion_ros/config/curt_mini_calibration_debug.yaml`
 
 Debug topics:
 - `/debug/calibration_health` (`Float32`)

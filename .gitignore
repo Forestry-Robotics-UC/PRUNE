@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Local operator guidance
+AGENTS.md
+
 # Python virtualenv
 .venv/
 venv/

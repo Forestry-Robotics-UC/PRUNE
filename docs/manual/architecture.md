@@ -28,6 +28,7 @@
    - geometry (depth image or LiDAR cloud)
    - camera info
    - optional confidence image
+   - optional invalid-mask image from ENTFAC Perception
 2. Optional sensor-domain correction:
    - semantic undistort
    - rolling-shutter correction
@@ -35,7 +36,11 @@
 3. Core fusion:
    - depth mode: `fuse_depth_semantics(...)`
    - LiDAR mode: `fuse_lidar_semantics(...)`
-4. Publish semantic `PointCloud2`
+4. Optional projection-quality gates:
+   - confidence threshold
+   - invalid mask
+   - LiDAR depth-edge / occlusion checks
+5. Publish semantic `PointCloud2`
 
 ## Configuration entry points
 

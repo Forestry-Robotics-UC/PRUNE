@@ -23,10 +23,14 @@ See `LICENSE`.
 
 ## Responsibilities
 - Input: semantic labels (+ optional confidence), depth image or LiDAR points,
-  camera intrinsics, and frame transforms.
+  camera intrinsics, frame transforms, and optional invalid masks from ENTFAC
+  Perception.
 - Output: `SemanticPointCloud` in a target frame with per-point label and optional
   confidence. No map state is stored.
 - Modes: depth-based fusion (RGB-D) and LiDAR projection fusion (LiDAR + camera).
+- Boundary: neural inference and GPU model execution belong in ENTFAC
+  Perception; Sensor Fusion remains model-agnostic and consumes already-published
+  image products.
 
 ## Repository Layout
 - `entfac_fusion_core/`: catkin Python package; numpy-only, ROS-agnostic core.
@@ -67,6 +71,8 @@ pcl = fuse_depth_semantics(
   - `~semantic_topic`: semantic image (label IDs or RGB colors).
   - `~semantic_input_type`: `labels` (single-channel label IDs) or `rgb` (3-channel colors used directly for output coloring).
   - `~confidence_topic` (optional): confidence image aligned to semantic labels.
+  - `~projection_invalid_mask_topic` (optional): single-channel invalid-mask image aligned to `~semantic_topic`; pixels equal to `~projection_invalid_mask_value` reject transferred labels/RGB.
+  - `~projection_invalid_mask_value`, `~projection_invalid_mask_dilate_px`: invalid-mask value and optional dilation radius.
   - camera intrinsics source:
     - `~camera_info`: CameraInfo topic for intrinsics + frame id.
     - `~camera_info_txt` (optional): calibration text file path for intrinsics (`K` / `camera_matrix.data` or `fx/fy/cx/cy`).
@@ -127,8 +133,15 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
 - Health/uncertainty topics:
   - `/debug/calibration_health` (`std_msgs/Float32`, 0..1 where higher is better)
   - `/debug/calibration_uncertainty` (`std_msgs/Float32`, 0..1 where lower is better)
-- A ready-to-tune overlay exists at:
-  - `entfac_fusion_ros/config/curt_mini_calibration_debug.yaml`
+- Keep correction disabled until bag metrics show stable observability and low reprojection error.
+
+### ENTFAC Perception bridge
+- Preferred products from ENTFAC Perception:
+  - label IDs or RGB semantic images on `~semantic_topic`
+  - per-pixel confidence on `~confidence_topic`
+  - optional invalid mask on `~projection_invalid_mask_topic`
+- Perception may pre-mask its published labels/RGB when its own filtering params are enabled. Sensor Fusion does not need to know which model or GPU backend produced those images.
+- The Sensor Fusion invalid-mask gate is an additional downstream safety filter: invalid projected samples keep their geometry but become unknown labels (`65535` in `PointCloud2`), zero confidence, and zero RGB payload.
 
 ### Offline tracked reprojection diagnostic
 - `tracked_reprojection_enable` adds a stateful feature-tracking diagnostic in LiDAR mode.

@@ -11,6 +11,8 @@ The v1 ROS interface is defined by the `colored_pcl_node` node.
 - `~depth_topic` (`sensor_msgs/Image`) — deprecated
 - `~lidar_topic` (`sensor_msgs/PointCloud2`) — deprecated
 - `~confidence_topic` (`sensor_msgs/Image`) — optional
+- `~projection_invalid_mask_topic` (`sensor_msgs/Image`) — optional, aligned to
+  `~semantic_topic`; invalid samples reject transferred labels/RGB evidence
 
 ### Published
 - `semantic_pointcloud` (`sensor_msgs/PointCloud2`)

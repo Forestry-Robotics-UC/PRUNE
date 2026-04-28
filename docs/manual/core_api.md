@@ -36,3 +36,14 @@
 
 ```{autofunction} entfac_fusion_core.utils.validation.flatten_masked
 ```
+
+## Mask helpers
+
+```{autofunction} entfac_fusion_core.utils.masks.invalid_image_to_mask
+```
+
+```{autofunction} entfac_fusion_core.utils.masks.sample_invalid_mask
+```
+
+```{autofunction} entfac_fusion_core.utils.masks.apply_invalid_projection_samples
+```
