@@ -37,7 +37,7 @@ from entfac_fusion_core.utils.validation import ensure_float_matrix
 LOGGER = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=16)
 def _meshgrid(shape):
     h, w = shape
     return np.meshgrid(np.arange(w), np.arange(h))

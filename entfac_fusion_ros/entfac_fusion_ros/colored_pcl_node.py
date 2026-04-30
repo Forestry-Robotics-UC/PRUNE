@@ -515,6 +515,11 @@ class ColoredPclNode:
             False,
             "If true, keep points outside the camera FOV (label=-1).",
         )
+        self.perception_invalid_label = self._get_param_int(
+            "~perception_invalid_label",
+            65535,
+            "Label value from Perception indicating invalid/low-confidence pixels; mapped to -1 (unlabeled) before fusion. ENTFAC-Perception uses 65535 by default.",
+        )
         self.colorize_labels = self._get_param_bool(
             "~colorize_labels",
             False,
@@ -1199,6 +1204,14 @@ class ColoredPclNode:
         self._ply_queue_warned_at = 0.0
         self._ply_seq = 0
         self._last_pcl: Optional[_LastPcl] = None
+
+        # Persistent depth buffer for LiDAR rasterization to avoid repeated allocations.
+        self._depth_buffer: Optional[np.ndarray] = None
+        self._depth_buffer_shape: Optional[Tuple[int, int]] = None
+
+        # Cache for successful static TF lookups: (target_frame, source_frame) -> (matrix, timestamp)
+        # Used to avoid repeated lookups of unchanging static transforms.
+        self._tf_cache: Dict[Tuple[str, str], Tuple[np.ndarray, rospy.Time]] = {}
 
         self.ply_output_dir = self._get_param_str(
             "~ply_output_dir",
@@ -2307,9 +2320,22 @@ class ColoredPclNode:
         return remapped
 
     def _lookup_transform(self, target_frame, source_frame, stamp):
+        # Check cache first for static transforms (using stamp=0).
+        cache_key = (target_frame, source_frame)
+        if stamp == rospy.Time(0) and cache_key in self._tf_cache:
+            cached_mat, _ = self._tf_cache[cache_key]
+            self._log.debug(
+                "_lookup_transform",
+                "TF cache hit %s -> %s",
+                source_frame,
+                target_frame,
+            )
+            return cached_mat
+        
         try:
+            # Use shorter timeout (0.1s) to fail fast on missing transforms.
             tf_msg = self.tf_buffer.lookup_transform(
-                target_frame, source_frame, stamp, rospy.Duration(1.0)
+                target_frame, source_frame, stamp, rospy.Duration(0.1)
             )
         except (
             tf2_ros.LookupException,
@@ -2335,6 +2361,11 @@ class ColoredPclNode:
                 exc,
             )
             return None
+        
+        # Cache static transforms (stamp=0) for future reuse.
+        if stamp == rospy.Time(0):
+            self._tf_cache[cache_key] = (mat, tf_msg.header.stamp)
+        
         self._log.debug(
             "_lookup_transform",
             "TF %s -> %s:\n%s",
@@ -2345,9 +2376,22 @@ class ColoredPclNode:
         return mat
 
     def _lookup_transform_with_stamp(self, target_frame, source_frame, stamp):
+        # Check cache first for static transforms (using stamp=0).
+        cache_key = (target_frame, source_frame)
+        if stamp == rospy.Time(0) and cache_key in self._tf_cache:
+            cached_mat, cached_stamp = self._tf_cache[cache_key]
+            self._log.debug(
+                "_lookup_transform",
+                "TF cache hit %s -> %s",
+                source_frame,
+                target_frame,
+            )
+            return cached_mat, cached_stamp
+        
         try:
+            # Use shorter timeout (0.1s) to fail fast on missing transforms.
             tf_msg = self.tf_buffer.lookup_transform(
-                target_frame, source_frame, stamp, rospy.Duration(1.0)
+                target_frame, source_frame, stamp, rospy.Duration(0.1)
             )
         except (
             tf2_ros.LookupException,
@@ -2373,6 +2417,11 @@ class ColoredPclNode:
                 exc,
             )
             return None, None
+        
+        # Cache static transforms (stamp=0) for future reuse.
+        if stamp == rospy.Time(0):
+            self._tf_cache[cache_key] = (mat, tf_msg.header.stamp)
+        
         self._log.debug(
             "_lookup_transform",
             "TF %s -> %s:\n%s",
@@ -3231,10 +3280,20 @@ class ColoredPclNode:
         image_shape: Tuple[int, int],
     ) -> np.ndarray:
         h, w = int(image_shape[0]), int(image_shape[1])
+        current_shape = (h, w)
+        
+        # Reuse persistent depth buffer if shape matches; allocate or resize on mismatch.
+        if self._depth_buffer is None or self._depth_buffer_shape != current_shape:
+            self._depth_buffer = np.empty((h, w), dtype=np.float32)
+            self._depth_buffer_shape = current_shape
+        
+        # Reset buffer to infinity.
+        self._depth_buffer.fill(np.inf)
+        depth = self._depth_buffer
+        
         points_cam = transform_points(camera_T_lidar, points)
         z = points_cam[:, 2]
         in_front = z > 0.0
-        depth = np.full((h, w), np.inf, dtype=np.float32)
         if not np.any(in_front):
             return depth
 
@@ -3253,9 +3312,22 @@ class ColoredPclNode:
         u = u[inside]
         v = v[inside]
         z = z[inside].astype(np.float32, copy=False)
-        flat = depth.reshape(-1)
+        
+        # Use sort-based reduction instead of np.minimum.at for better cache locality.
+        # Sort projected pixels by (v*w + u) to group same pixels together.
         idx = v * w + u
-        np.minimum.at(flat, idx, z)
+        sort_order = np.argsort(idx)
+        idx_sorted = idx[sort_order]
+        z_sorted = z[sort_order]
+        
+        # Find boundaries where pixel index changes (segment starts).
+        # Use np.minimum.reduceat which is optimized for sorted data.
+        flat = depth.reshape(-1)
+        segment_starts = np.concatenate(([0], np.where(np.diff(idx_sorted) != 0)[0] + 1))
+        min_values = np.minimum.reduceat(z_sorted, segment_starts)
+        unique_idx = idx_sorted[segment_starts]
+        flat[unique_idx] = np.minimum(flat[unique_idx], min_values)
+        
         return flat.reshape((h, w))
 
     def _depth_map_to_edge_map(self, depth_map: np.ndarray) -> np.ndarray:
@@ -4014,6 +4086,11 @@ class ColoredPclNode:
 
             if self.semantic_input_type == "labels":
                 labels = self._parse_semantic_labels(sem_msg)
+                # Map Perception invalid label to internal unlabeled marker (-1).
+                invalid_from_perception = labels == self.perception_invalid_label
+                if np.any(invalid_from_perception):
+                    labels = labels.copy().astype(np.int64)
+                    labels[invalid_from_perception] = -1
                 if include_rgb:
                     rgb_lut = self._get_rgb_float_lut(labels)
             else:
@@ -4257,6 +4334,11 @@ class ColoredPclNode:
 
             if self.semantic_input_type == "labels":
                 labels = self._parse_semantic_labels(sem_msg)
+                # Map Perception invalid label to internal unlabeled marker (-1).
+                invalid_from_perception = labels == self.perception_invalid_label
+                if np.any(invalid_from_perception):
+                    labels = labels.copy().astype(np.int64)
+                    labels[invalid_from_perception] = -1
                 if include_rgb:
                     rgb_lut = self._get_rgb_float_lut(labels)
             else:
