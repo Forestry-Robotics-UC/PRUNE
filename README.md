@@ -90,6 +90,7 @@ pcl = fuse_depth_semantics(
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~sync_slop_sec`, `~pair_max_dt_sec`, `~sync_queue_size`: ApproximateTimeSynchronizer slop/queue and hard max |Δt| for pairing.
   - `~debug_project_lidar`: publish a debug image with projected lidar points (topic `/debug/lidar_projection`, depth coloring, stride=5).
+  - `~debug_output_dir`, `~debug_output_stride`: save sampled debug overlays as PNGs under `entfac_fusion_ros/output/debug/` by default.
   - `~online_calibration_enable`: enable lightweight online LiDAR-camera misalignment estimation (classical, no neural networks), with health and uncertainty outputs.
   - `~online_calibration_every_n_frames`, `~online_calibration_max_points`: control compute budget for online calibration updates.
   - `~online_calibration_step_deg`, `~online_calibration_learning_rate`, `~online_calibration_max_correction_deg`: rotational correction update behavior and safety clamps.
@@ -149,6 +150,7 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
 - Debug topics:
   - `/debug/tracked_reprojection` (`sensor_msgs/Image`)
   - `/debug/tracked_reprojection_error_px` (`std_msgs/Float32`, lower is better)
+- When `~debug_output_dir` is set, the same debug overlays are also written to disk for offline inspection.
 - This path is heavier than the normal online fusion/debug loop and is intended mainly for rosbag validation runs.
 
 ### Live tuning with `rqt_reconfigure`

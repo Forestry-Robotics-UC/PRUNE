@@ -714,6 +714,37 @@ class ColoredPclNode:
             False,
             "If true (lidar mode), publish LiDAR depth/edge images, a reprojection heatmap, and an alignment score.",
         )
+        self.debug_output_dir = self._get_param_str(
+            "~debug_output_dir",
+            "",
+            "Directory where sampled debug overlays are written (empty uses <entfac_fusion_ros>/output/debug).",
+            allow_empty=True,
+        )
+        if not self.debug_output_dir:
+            try:
+                import rospkg  # lazy import
+
+                pkg_path = rospkg.RosPack().get_path("entfac_fusion_ros")
+                self.debug_output_dir = str(Path(pkg_path) / "output" / "debug")
+                self._param_meta["~debug_output_dir"]["value"] = self.debug_output_dir
+            except Exception as exc:  # noqa: BLE001
+                fallback = Path.home() / ".ros" / "entfac_fusion_ros" / "debug"
+                self.debug_output_dir = str(fallback)
+                self._param_meta["~debug_output_dir"]["value"] = self.debug_output_dir
+                self._log.warn(
+                    "__init__",
+                    "Unable to resolve package path for default ~debug_output_dir (%s); using %s",
+                    exc,
+                    self.debug_output_dir,
+                )
+        Path(self.debug_output_dir).mkdir(parents=True, exist_ok=True)
+        self.debug_output_stride = self._get_param_int(
+            "~debug_output_stride",
+            20,
+            "Save every Nth debug callback per stream (1 saves every frame).",
+        )
+        if self.debug_output_stride < 1:
+            raise ValueError("~debug_output_stride must be >= 1")
         self.tracked_reprojection_enable = self._get_param_bool(
             "~tracked_reprojection_enable",
             False,
@@ -1129,6 +1160,7 @@ class ColoredPclNode:
         self._tracked_reprojection_prev_gray = None
         self._tracked_reprojection_prev_pts = None
         self._tracked_reprojection_last_log_at = 0.0
+        self._debug_callback_seq = 0
         self._rolling_shutter_log_at = 0.0
         self._rolling_shutter_warn_at = 0.0
         self._lidar_deskew_log_at = 0.0
@@ -2706,6 +2738,36 @@ class ColoredPclNode:
             )
         return invalid
 
+    def _save_debug_rgb_image(self, kind: str, rgb_u8: np.ndarray, header) -> None:
+        if not self.debug_output_dir or self.debug_output_stride < 1:
+            return
+        if self._debug_callback_seq <= 0:
+            return
+        if ((self._debug_callback_seq - 1) % int(self.debug_output_stride)) != 0:
+            return
+        if not self._ensure_cv2("_save_debug_rgb_image"):
+            return
+        cv2 = self._cv2
+        rgb_u8 = np.ascontiguousarray(np.asarray(rgb_u8, dtype=np.uint8))
+        if rgb_u8.ndim != 3 or rgb_u8.shape[2] != 3:
+            raise ValueError(f"rgb_u8 must be (H, W, 3), got {rgb_u8.shape}")
+        if header is not None and getattr(header, "stamp", None) is not None:
+            try:
+                stamp_ns = int(header.stamp.to_nsec())
+            except Exception:  # noqa: BLE001
+                stamp_ns = int(time.time() * 1e9)
+        else:
+            stamp_ns = int(time.time() * 1e9)
+        out_dir = Path(self.debug_output_dir) / kind
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{kind}_{stamp_ns:019d}_{int(self._debug_callback_seq):06d}.png"
+        if not cv2.imwrite(str(out_path), cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2BGR)):
+            self._log.warn(
+                "_save_debug_rgb_image",
+                "Failed to write debug image to %s",
+                out_path,
+            )
+
     def _publish_lidar_projection_debug(
         self, base_rgb, image_shape, uv, header, colors_u8=None
     ):
@@ -2768,6 +2830,7 @@ class ColoredPclNode:
         msg.step = w * 3
         msg.data = img.tobytes()
         self._debug_proj_pub.publish(msg)
+        self._save_debug_rgb_image("lidar_projection", img, header)
 
     def _infer_num_labels(self, labels_img: np.ndarray) -> int:
         labels_img = np.asarray(labels_img)
@@ -2802,7 +2865,9 @@ class ColoredPclNode:
         b = ((1.0 - t) * 255.0).astype(np.uint8, copy=False)
         return np.stack((r, g, b), axis=-1)
 
-    def _publish_debug_rgb_image(self, pub, rgb_u8: np.ndarray, header) -> None:
+    def _publish_debug_rgb_image(
+        self, pub, rgb_u8: np.ndarray, header, *, save_kind: Optional[str] = None
+    ) -> None:
         if pub is None:
             return
         rgb_u8 = np.ascontiguousarray(np.asarray(rgb_u8, dtype=np.uint8))
@@ -2818,6 +2883,8 @@ class ColoredPclNode:
         msg.step = int(w * 3)
         msg.data = rgb_u8.tobytes()
         pub.publish(msg)
+        if save_kind:
+            self._save_debug_rgb_image(save_kind, rgb_u8, header)
 
     def _publish_debug_fov_points(self, points_lidar: np.ndarray, frame_id: str, stamp) -> None:
         if self._debug_fov_points_pub is None:
@@ -3126,6 +3193,7 @@ class ColoredPclNode:
             self._debug_tracked_reprojection_pub,
             overlay,
             header,
+            save_kind="tracked_reprojection",
         )
         self._debug_tracked_reprojection_error_pub.publish(
             Float32(data=float(error_value if np.isfinite(error_value) else 0.0))
@@ -3722,16 +3790,19 @@ class ColoredPclNode:
             self._debug_depth_pub,
             self._depth_map_to_rgb(depth_map),
             header,
+            save_kind="range_depth",
         )
         self._publish_debug_rgb_image(
             self._debug_edge_pub,
             self._edge_map_to_debug_rgb(depth_edges),
             header,
+            save_kind="range_edge",
         )
         self._publish_debug_rgb_image(
             self._debug_heatmap_pub,
             self._float_map_to_heatmap_rgb(heat),
             header,
+            save_kind="range_heatmap",
         )
         self._debug_score_pub.publish(Float32(data=score))
 
@@ -4548,6 +4619,7 @@ class ColoredPclNode:
             if self._ply_recording:
                 self._enqueue_ply(self._last_pcl)
 
+        self._debug_callback_seq += 1
         dt = time.perf_counter() - t0
         self._maybe_emit_status(points=int(pcl.points_xyz.shape[0]), callback_sec=dt)
 

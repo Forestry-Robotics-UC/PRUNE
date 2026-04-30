@@ -27,6 +27,8 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~debug_project_lidar_outline_only` | `bool` | `false` | If true, draw projected LiDAR markers as outlines so the RGB image stays visible underneath. |
 | `~debug_project_lidar_radius` | `int` | `0` | Marker radius in pixels for the projected LiDAR debug overlay (0 draws single pixels). |
 | `~debug_project_lidar_stride` | `int` | `5` | Subsample factor for projected LiDAR debug overlay (1 draws every projected point). |
+| `~debug_output_dir` | `str` | `''` | Directory where sampled debug overlays are written (empty uses `<entfac_fusion_ros>/output/debug`). |
+| `~debug_output_stride` | `int` | `20` | Save every Nth debug callback per stream (1 saves every frame). |
 | `~debug_publish_fov_points` | `bool` | `false` | If true (lidar mode), publish only the LiDAR points that passed the camera FOV test as a debug PointCloud2 in the LiDAR frame. |
 | `~debug_range_view` | `bool` | `false` | If true (lidar mode), publish LiDAR depth/edge images, a reprojection heatmap, and an alignment score. |
 | `~depth_input_topic` | `str` | `None` | Geometry input topic: depth (sensor_msgs/Image) or LiDAR (sensor_msgs/PointCloud2). The node auto-detects which message type is published and selects the fusion mode. |
