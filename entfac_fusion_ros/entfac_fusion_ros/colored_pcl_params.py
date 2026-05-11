@@ -10,6 +10,8 @@ from typing import Any, Optional, Tuple
 import numpy as np
 import rospy
 
+_MISSING = object()
+
 from entfac_fusion_core.utils.validation import require_homogeneous_transform
 
 
@@ -48,9 +50,8 @@ def record_param(node, name, value, source, description) -> None:
 
 def get_param(node, name, default, description, *, allow_empty=False):
     """Read a ROS parameter while tracking its origin for debug reporting."""
-    has = rospy.has_param(name)
-    if has:
-        value = rospy.get_param(name)
+    value = rospy.get_param(name, _MISSING)
+    if value is not _MISSING:
         source = "param_server"
     else:
         value = default

@@ -1148,6 +1148,7 @@ class ColoredPclNode:
         else:
             self._online_calibration_status = "disabled"
         self._resolve_cloud_stamp_source()
+        self._tf_cache: Dict[Tuple[str, str], Tuple[np.ndarray, rospy.Time]] = {}
         self._prime_transforms()
         self._undistort_map1 = None
         self._undistort_map2 = None
@@ -4352,6 +4353,8 @@ class ColoredPclNode:
                     self._warned_rgb_color_map = True
 
             confidence = image_to_numpy(conf_msg).astype(float) if conf_msg else None
+            if confidence is not None and self._undistort_active:
+                confidence = self._undistort_array(confidence, interpolation="linear")
             semantic_shape = labels.shape if labels is not None else packed_img.shape
             projection_invalid_mask = self._parse_projection_invalid_mask(
                 invalid_mask_msg,
@@ -4385,6 +4388,9 @@ class ColoredPclNode:
             else:
                 points = pointcloud2_to_xyz(lidar_msg)
                 points = self._apply_lidar_points_compat(points)
+            if self.max_depth_m is not None and points.shape[0]:
+                keep = np.linalg.norm(points, axis=1) <= float(self.max_depth_m)
+                points = points[keep]
             corrected_camera_T_lidar = camera_T_lidar
             if semantic_debug_img is not None:
                 sem_h, sem_w = semantic_debug_img.shape[:2]
@@ -4641,18 +4647,6 @@ class ColoredPclNode:
                     image_shape=(h, w),
                     header=sem_msg.header,
                 )
-
-            if self.max_depth_m is not None and pcl.points_xyz.shape[0]:
-                ranges = np.linalg.norm(pcl.points_xyz, axis=1)
-                keep = ranges <= float(self.max_depth_m)
-                if not np.all(keep):
-                    pcl = SemanticPointCloud(
-                        pcl.points_xyz[keep],
-                        pcl.labels[keep],
-                        pcl.confidence[keep] if pcl.confidence is not None else None,
-                    )
-                    if rgb_values is not None:
-                        rgb_values = rgb_values[keep]
 
             if self.debug and not self._logged_lidar_summary:
                 if pcl.points_xyz.shape[0]:

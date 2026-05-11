@@ -29,6 +29,12 @@ from __future__ import annotations
 
 import numpy as np
 
+# sensor_msgs/PointField datatype → numpy little-endian format string
+_POINTFIELD_DTYPE = {
+    1: "<i1", 2: "<u1", 3: "<i2", 4: "<u2",
+    5: "<i4", 6: "<u4", 7: "<f4", 8: "<f8",
+}
+
 
 def image_to_numpy(msg):
     """Convert ``sensor_msgs/Image`` to a NumPy array without copies when possible.
@@ -136,13 +142,18 @@ def pointcloud2_to_xyz_t(msg, *, time_field: str = "t"):
     if msg.is_bigendian:
         raise ValueError("big-endian PointCloud2 not supported in fast path")
     field_offsets = {f.name: f.offset for f in msg.fields}
+    field_datatypes = {f.name: f.datatype for f in msg.fields}
     for needed in ("x", "y", "z", time_field):
         if needed not in field_offsets:
             raise ValueError(f"PointCloud2 missing field: {needed}")
+    t_datatype = field_datatypes[time_field]
+    t_fmt = _POINTFIELD_DTYPE.get(t_datatype)
+    if t_fmt is None:
+        raise ValueError(f"Unsupported PointField datatype {t_datatype} for field '{time_field}'")
     dtype = np.dtype(
         {
             "names": ["x", "y", "z", "t"],
-            "formats": ["<f4", "<f4", "<f4", "<u4"],
+            "formats": ["<f4", "<f4", "<f4", t_fmt],
             "offsets": [
                 field_offsets["x"],
                 field_offsets["y"],
