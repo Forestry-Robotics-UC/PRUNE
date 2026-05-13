@@ -37,7 +37,7 @@ See `LICENSE`.
   - Python sources live in `entfac_fusion_core/src/entfac_fusion_core/`.
 - `entfac_fusion_ros/`: catkin ROS wrapper package.
   - `scripts/colored_pcl_node.py`: roslaunch entrypoint (thin wrapper).
-  - `entfac_fusion_ros/src/entfac_fusion_ros/colored_pcl_node.py`: node implementation;
+  - `entfac_fusion_ros/colored_pcl_node.py`: node implementation;
     bridges topics to the core and publishes `sensor_msgs/PointCloud2`.
   - `config/core.yaml`: core parameters (common defaults).
   - `config/expert.yaml`: advanced tuning (IMU/deskew/PLY/extrinsics).
@@ -78,7 +78,6 @@ pcl = fuse_depth_semantics(
     - `~camera_info_txt` (optional): calibration text file path for intrinsics (`K` / `camera_matrix.data` or `fx/fy/cx/cy`).
     - `~camera_frame` (optional): fallback frame id when `~camera_info_txt` does not contain one.
   - `~depth_input_topic`: geometry input topic; set to either a depth `sensor_msgs/Image` or a `sensor_msgs/PointCloud2` (LiDAR). The node auto-detects which and selects the fusion mode.
-  - Deprecated: `~depth_topic` and `~lidar_topic` (still supported for backwards-compat).
   - `~mode`: force fusion mode (`depth` or `lidar`); empty enables auto-detect.
   - Mode auto-detected from `~depth_input_topic` when `~mode` is empty (depth if Image, lidar if PointCloud2).
   - `~core_debug`: enable DEBUG logs from `entfac_fusion_core` (can be noisy).
@@ -199,7 +198,6 @@ docker run --rm -it ros-entfac
 - Build locally: `pip install -r docs/requirements.txt && sphinx-build -b html docs docs/_build/html`
 - Public API (v1.0): `docs/manual/public_api.md`
 - Online calibration methodology (paper-style): `docs/manual/online_calibration_methodology.md`
-  Bags are available under `/bags`.
 
 ## Time sync tools (offline bags)
 Current offline timing utility:
