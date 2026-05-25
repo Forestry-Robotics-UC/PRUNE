@@ -1,6 +1,11 @@
-# Rosbag Time Skew Guide
+# Sensor Fusion Tools
 
-This repository currently ships one offline timing utility:
+This repository ships offline and experiment utilities for timing, validation,
+and paper-result generation.
+
+## Rosbag Time Skew
+
+Primary utility:
 - `tools/rosbag_time_skew.py`
 
 The script computes nearest-neighbor timestamp deltas between two topics and prints summary stats.
@@ -45,3 +50,37 @@ python tools/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
 - Only messages with `msg.header.stamp` are considered.
 - If a topic has no valid header stamps, the script exits with an error.
 - This tool is descriptive only; it does not rewrite bag timestamps.
+
+## Results / Ablation Tools
+
+Paper-result utilities live under `tools/results/`.
+
+Main workflow:
+
+```bash
+python tools/results/run_ablation_suite.py \
+  --bags /bags/forest_01.bag /bags/forest_02.bag \
+  --variants naive mask_only mask_edge full \
+  --results-dir results/icist_2026 \
+  --enable-overlays
+
+bash results/icist_2026/run_all.sh
+python tools/results/summarize_metrics.py --results-dir results/icist_2026
+python tools/results/make_paper_tables.py --results-dir results/icist_2026
+python tools/results/plot_results.py --results-dir results/icist_2026
+```
+
+Outputs:
+- `all_results_summary.csv`
+- `paper/table_ablation.csv`
+- `paper/table_runtime.csv`
+- `paper/table_bags.csv`
+- paper plot PNGs under `paper/`
+- optional overlays under `<bag>/<variant>/overlays/`
+
+The runner writes shell commands by default. Use `--execute` only inside a
+prepared ROS Noetic/CurtMini environment.
+
+The default launch target is `entfac_fusion_ros forestsphere/curt_mini.launch`.
+Use `--launch-file` when running the same result scripts from a branch with a
+different launch layout.
