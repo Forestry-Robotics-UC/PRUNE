@@ -71,7 +71,7 @@ pcl = fuse_depth_semantics(
   - `~semantic_topic`: semantic image (label IDs or RGB colors).
   - `~semantic_input_type`: `labels` (single-channel label IDs) or `rgb` (3-channel colors used directly for output coloring).
   - `~confidence_topic` (optional): confidence image aligned to semantic labels.
-  - `~projection_invalid_mask_topic` (optional): single-channel invalid-mask image aligned to `~semantic_topic`; pixels equal to `~projection_invalid_mask_value` reject transferred labels/RGB.
+  - `~projection_invalid_mask_topic` (optional): single-channel invalid-mask image aligned to `~semantic_topic`; pixels equal to `~projection_invalid_mask_value` are ignored during projection instead of being published as black RGB points.
   - `~projection_invalid_mask_value`, `~projection_invalid_mask_dilate_px`: invalid-mask value and optional dilation radius.
   - camera intrinsics source:
     - `~camera_info`: CameraInfo topic for intrinsics + frame id.
@@ -141,7 +141,9 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
   - per-pixel confidence on `~confidence_topic`
   - optional invalid mask on `~projection_invalid_mask_topic`
 - Perception may pre-mask its published labels/RGB when its own filtering params are enabled. Sensor Fusion does not need to know which model or GPU backend produced those images.
-- The Sensor Fusion invalid-mask gate is an additional downstream safety filter: invalid projected samples keep their geometry but become unknown labels (`65535` in `PointCloud2`), zero confidence, and zero RGB payload.
+- The Sensor Fusion invalid-mask gate is an additional downstream safety filter:
+  invalid projected samples are dropped from the published semantic point cloud
+  so sky pixels from Perception do not become black map observations.
 
 ### Offline tracked reprojection diagnostic
 - `tracked_reprojection_enable` adds a stateful feature-tracking diagnostic in LiDAR mode.
@@ -190,7 +192,7 @@ docker run --rm -it ros-entfac
 ## Docker (ROS)
 - General usage (interactive shell):
   ```bash
-  docker compose -f docker-compose.yml run --rm sensor-fusion-ros
+  docker compose -f dataset-compose.yml run --rm dataset-processing
   ```
 - ForestSphere-specific compose, URDFs, launch scripts, and dataset workflow are documented in `forestsphere.md`.
 
@@ -201,25 +203,23 @@ docker run --rm -it ros-entfac
 
 ## Time sync tools (offline bags)
 Current offline timing utility:
-- `tools/rosbag_time_skew.py`: nearest-neighbor timestamp skew stats (mean/median/min/max/p95/p99).
+- `tools/diagnostics/rosbag_time_skew.py`: nearest-neighbor timestamp skew stats (mean/median/min/max/p95/p99).
 - Full usage guide: `tools/tools.md`.
 
 Examples:
 ```bash
 # Fast skew stats (nearest-neighbor deltas)
-python tools/rosbag_time_skew.py /data/*.bag /camera/image /os_cloud_node/points
+python tools/diagnostics/rosbag_time_skew.py /data/*.bag /camera/image /os_cloud_node/points
 
 # Analyze all .bag files under a directory
-python tools/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
+python tools/diagnostics/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
 ```
 
 ## Docker (ROS + GUI / RViz)
 - Optional X11-forwarding service for debugging GUI tools (RViz, rqt) from inside the container:
   ```bash
   xhost +si:localuser:$(whoami)
-  docker compose -f docker-compose.yml run --rm sensor-fusion-ros-gui
-  # inside:
-  rviz
+  docker compose -f dataset-compose.yml run --rm curt-mini-gui
   ```
   To revoke access: `xhost -si:localuser:$(whoami)`.
   If `rviz` is not installed in your image, install `ros-noetic-rviz` (or run RViz on the host).
@@ -244,6 +244,22 @@ pytest -q
   roslaunch entfac_fusion_ros colored_pcl.launch \
     camera_info_txt:=/path/to/camera_info.txt \
     camera_frame:=camera_color_optical_frame
+  ```
+- Curt Mini ICNF replay with UFOMap enabled and RViz disabled:
+  ```bash
+  roslaunch entfac_fusion_ros forestsphere/curt_mini.launch \
+    play_bag:=true \
+    bag_path:=/bags/2026_03_27_17_02_24__icnf-curt__ros1_chunk_000.bag \
+    localization_bag:=/bags/ICNF_curt_localization_50hz.bag \
+    camera_topic:=/camera/color/image_raw \
+    camera_info_txt:=$(rospack find entfac_fusion_ros)/config/forestsphere/curt_mini_realsense_camera_info_720p.txt \
+    dataset_config:=$(rospack find entfac_fusion_ros)/config/forestsphere/icnf_curt_mini.yaml \
+    run_ufomap:=true \
+    rviz:=false
+  ```
+- Headless Docker wrapper for the same Curt Mini path:
+  ```bash
+  docker compose -f dataset-compose.yml run --rm curt-mini-gui
   ```
 - To decompress compressed topics, set `use_republish:=true` and provide base input topics (no `/compressed` suffix), e.g. `semantic_in_topic:=/segmentation/test`.
 - Choupal bag example (plays bags, republishes `/segmentation/test` from compressed, and loads TF from `/bags/sensor-box.urdf`):
@@ -299,3 +315,15 @@ color_map:
   - Pin the node to a big core if needed (`taskset`) and keep labels single-channel
     to avoid extra copies.
   - Downsampling uses stride slicing (nearest-neighbor), so labels remain valid.
+
+## ForestSphere autonomous recovery loop
+Use the watchdog below for the long-running semantic pointcloud export recovery workflow:
+
+```bash
+```
+
+It persists lightweight state under `output/semantic_pointcloud_bags/`, polls the active ICNF/Airfield export runs, validates completed bags before moving them into `kDrive`, and handles the recovery paths already seen in practice:
+- playback finished but recorder did not finalize
+- recorder exited before a bag was written
+- Airfield semantic replay blocked by an unindexed `godzilla` bag
+- Airfield RGB redo after the `rgb` field bugfix

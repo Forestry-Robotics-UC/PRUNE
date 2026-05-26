@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -45,20 +46,43 @@ VARIANTS = {
 }
 
 
+_SAFE_ROSLAUNCH_TOKEN = re.compile(r"^[A-Za-z0-9_./-]+$")
+
+
 def _bag_name(path: str) -> str:
-    return Path(path).stem
+    first = path.split()[0]
+    return Path(first).stem
+
+
+def _launch_command_prefix(args) -> str:
+    if Path(args.launch_file).is_absolute():
+        return " ".join(shlex.quote(part) for part in ["roslaunch", args.launch_file])
+    if "/" in args.launch_file:
+        for value, label in [
+            (args.fusion_package, "--fusion-package"),
+            (args.launch_file, "--launch-file"),
+        ]:
+            if not _SAFE_ROSLAUNCH_TOKEN.match(value):
+                raise ValueError(f"{label} contains unsupported shell characters: {value}")
+        return f'roslaunch "$(rospack find {args.fusion_package})/launch/{args.launch_file}"'
+    return " ".join(
+        shlex.quote(part) for part in ["roslaunch", args.fusion_package, args.launch_file]
+    )
 
 
 def _command(bag: str, variant: str, results_dir: Path, args) -> str:
+    extra_bags = " ".join(args.extra_bags or [])
     params = {
         "play_bag": "true",
         "bag_path": bag,
         "run_ufomap": "false",
         "rviz": "false",
         "debug": "false",
+        "rate": str(args.rate),
+        "start_sec": str(args.start_sec),
         "dataset_config": args.base_config,
         "experiment_variant_name": variant,
-        "bag_name": _bag_name(bag),
+        "bag_name": args.bag_name or _bag_name(bag),
         "results_dir": str(results_dir),
         "enable_metrics_csv": "true",
         "enable_overlay_export": str(args.enable_overlays).lower(),
@@ -66,15 +90,27 @@ def _command(bag: str, variant: str, results_dir: Path, args) -> str:
         "max_overlay_frames": str(args.max_overlay_frames),
         "projection_confidence_min": str(args.projection_confidence_min),
     }
+    if extra_bags:
+        params["localization_bag"] = extra_bags
+    if args.duration_sec:
+        params["duration_sec"] = str(args.duration_sec)
     params.update(VARIANTS[variant])
-    parts = ["roslaunch", args.fusion_package, args.launch_file]
-    parts.extend(f"{key}:={value}" for key, value in params.items())
-    return " ".join(shlex.quote(part) for part in parts)
+    launch = _launch_command_prefix(args)
+    launch_args = " ".join(
+        shlex.quote(f"{key}:={value}") for key, value in params.items()
+    )
+    return f"{launch} {launch_args}"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bags", nargs="+", required=True)
+    parser.add_argument(
+        "--extra-bags",
+        nargs="*",
+        default=[],
+        help="Additional bags passed through the launch localization_bag/bag_path_extra arg",
+    )
     parser.add_argument("--variants", nargs="+", default=["naive", "mask_only", "mask_edge", "full"])
     parser.add_argument(
         "--base-config",
@@ -86,7 +122,31 @@ def main() -> int:
         default="forestsphere/curt_mini.launch",
         help="roslaunch file for the fusion pipeline; default targets the ForestSphere CurtMini overlay",
     )
-    parser.add_argument("--results-dir", default="results/icist_2026")
+    parser.add_argument(
+        "--study-name",
+        default="ablation",
+        help=(
+            "Name of the ablation study output folder under results/ when "
+            "--results-dir is not provided explicitly"
+        ),
+    )
+    parser.add_argument(
+        "--results-dir",
+        default="",
+        help=(
+            "Explicit results output directory. Defaults to "
+            "results/<study-name>."
+        ),
+    )
+    parser.add_argument("--bag-name", default="")
+    parser.add_argument("--rate", type=float, default=1.0)
+    parser.add_argument("--start-sec", type=float, default=0.0)
+    parser.add_argument(
+        "--duration-sec",
+        type=float,
+        default=0.0,
+        help="rosbag play duration in bag seconds; 0 plays to the end",
+    )
     parser.add_argument("--enable-overlays", action="store_true")
     parser.add_argument("--overlay-stride", type=int, default=10)
     parser.add_argument("--max-overlay-frames", type=int, default=50)
@@ -98,7 +158,7 @@ def main() -> int:
     if unknown:
         raise SystemExit(f"Unknown variants: {', '.join(unknown)}")
 
-    results_dir = Path(args.results_dir)
+    results_dir = Path(args.results_dir) if args.results_dir else Path("results") / args.study_name
     results_dir.mkdir(parents=True, exist_ok=True)
     commands = [
         _command(bag, variant, results_dir, args)
@@ -116,7 +176,14 @@ def main() -> int:
     print(f"Wrote {script_path}")
 
     if args.execute:
-        for command in commands:
+        iterator = commands
+        try:
+            from tqdm import tqdm
+
+            iterator = tqdm(commands, desc="Running ablations", unit="run")
+        except Exception:
+            pass
+        for command in iterator:
             subprocess.run(command, shell=True, check=True)
     return 0
 

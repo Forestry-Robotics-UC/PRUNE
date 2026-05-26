@@ -209,7 +209,7 @@ def summarize_results_tree(results_dir: Path | str) -> List[Dict[str, object]]:
     return summaries
 
 
-def write_paper_tables(results_dir: Path | str) -> None:
+def write_results_tables(results_dir: Path | str) -> None:
     results_dir = Path(results_dir)
     summaries = _load_or_build_summaries(results_dir)
     paper_dir = results_dir / "paper"

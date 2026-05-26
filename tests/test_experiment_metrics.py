@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for ICIST results metrics helpers."""
+"""Tests for ablation results metrics helpers."""
 
 import csv
 import json
@@ -16,7 +16,7 @@ from entfac_fusion_ros.experiment_metrics import (  # noqa: E402
     FrameMetrics,
     MetricsCsvLogger,
     summarize_metrics_file,
-    write_paper_tables,
+    write_results_tables,
 )
 
 
@@ -128,7 +128,7 @@ class ExperimentMetricsTests(unittest.TestCase):
             with (metrics_path.parent / "summary.json").open(encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["mean_output_points"], 45.0)
 
-    def test_write_paper_tables_aggregates_variants(self):
+    def test_write_results_tables_aggregates_variants(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             for variant, rejected in [("naive", 0), ("full", 5)]:
@@ -163,7 +163,7 @@ class ExperimentMetricsTests(unittest.TestCase):
                 )
                 summarize_metrics_file(metrics_path)
 
-            write_paper_tables(tmp_path)
+            write_results_tables(tmp_path)
 
             ablation_path = tmp_path / "paper" / "table_ablation.csv"
             runtime_path = tmp_path / "paper" / "table_runtime.csv"

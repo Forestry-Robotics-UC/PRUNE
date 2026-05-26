@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create paper-ready CSV tables from experiment summaries."""
+"""Create results CSV tables from experiment summaries."""
 
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ def main() -> int:
     args = parser.parse_args()
 
     _add_ros_package_path()
-    from entfac_fusion_ros.experiment_metrics import write_paper_tables
+    from entfac_fusion_ros.experiment_metrics import write_results_tables
 
-    write_paper_tables(Path(args.results_dir))
-    print(f"Wrote paper tables under {Path(args.results_dir) / 'paper'}")
+    write_results_tables(Path(args.results_dir))
+    print(f"Wrote results tables under {Path(args.results_dir) / 'paper'}")
     return 0
 
 

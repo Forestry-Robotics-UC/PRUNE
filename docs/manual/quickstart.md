@@ -36,10 +36,10 @@ Config defaults live in `entfac_fusion_ros/config/core.yaml` and `entfac_fusion_
 
 ```bash
 # Fast skew stats (nearest-neighbor deltas)
-python tools/rosbag_time_skew.py /data/*.bag /camera/image /os_cloud_node/points
+python tools/diagnostics/rosbag_time_skew.py /data/*.bag /camera/image /os_cloud_node/points
 
 # Analyze all .bag files under a directory
-python tools/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
+python tools/diagnostics/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
 ```
 
 ## Build docs (Sphinx)

@@ -55,7 +55,7 @@ Analyzes saved diagnostics for:
 cd /home/forestsphere/work_utils/ENTFAC-Sensor-Fusion-dev
 
 # Run full validation workflow
-tools/validate_curtmini_workflow.sh \
+tools/validation/validate_curtmini_workflow.sh \
     --bag /mnt/t7_shield/ICNF/ICNF_curt_localization_50hz.bag \
     --duration 60 \
     --check-resources
@@ -119,7 +119,7 @@ The issue manifests as:
 ### Run with Custom Config
 
 ```bash
-tools/validate_curtmini_workflow.sh \
+tools/validation/validate_curtmini_workflow.sh \
     --bag /path/to/bag.bag \
     --duration 120
 ```
@@ -140,7 +140,7 @@ Run with custom config:
 ### Run with Slim Dataset Bag (28 GB, ~15 minutes)
 
 ```bash
-tools/validate_curtmini_workflow.sh \
+tools/validation/validate_curtmini_workflow.sh \
     --bag /mnt/t7_shield/ICNF/icnf_ikalibr_order_003_010_slim.bag \
     --duration 300 \
     --check-resources
