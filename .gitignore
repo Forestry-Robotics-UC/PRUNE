@@ -23,5 +23,15 @@ install/
 
 # Output folder
 output/
+/results/
 
 .vscode
+
+.venv*/
+.runtime/
+
+# Local ops guide (machine-specific paths, not for commit)
+agents.md
+
+# Claude Code memory/settings
+.claude/

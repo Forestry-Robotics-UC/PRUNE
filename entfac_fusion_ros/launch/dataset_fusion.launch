@@ -1,15 +1,47 @@
 <launch>
   <arg name="use_sim_time" default="false"/>
+  <arg name="play_bag" default="false"/>
+  <arg name="bag_path" default=""/>
+  <arg name="bag_path_extra" default=""/>
+  <arg name="rate" default="1.0"/>
+  <arg name="start_sec" default="0.0"/>
+  <arg name="duration_sec" default=""/>
+  <arg name="pause" default="false"/>
+  <arg name="loop" default="false"/>
+  <arg name="bag_tf_topic" default="/tf_bag"/>
+  <arg name="bag_tf_static_topic" default="/tf_static_bag"/>
+  <arg name="relay_bag_tf" default="true"/>
   <arg name="use_urdf" default="false"/>
   <arg name="debug" default="false"/>
   <arg name="rviz" default="false"/>
   <arg name="rviz_config" default=""/>
   <arg name="urdf_path" default=""/>
   <arg name="dataset_config" default=""/>
+  <arg name="semantic_topic" default=""/>
+  <arg name="semantic_input_type" default=""/>
+  <arg name="camera_info_topic" default=""/>
   <arg name="camera_info_txt" default=""/>
   <arg name="camera_frame" default=""/>
+  <arg name="depth_input_topic" default=""/>
+  <arg name="projection_invalid_mask_topic" default=""/>
+  <arg name="projection_invalid_mask_value" default=""/>
   <arg name="target_frame" default="base_link"/>
   <arg name="output_topic" default="/ouster/rgb_colored"/>
+  <arg name="experiment_variant_name" default=""/>
+  <arg name="bag_name" default=""/>
+  <arg name="results_dir" default=""/>
+  <arg name="enable_metrics_csv" default="false"/>
+  <arg name="enable_overlay_export" default="false"/>
+  <arg name="overlay_stride" default="10"/>
+  <arg name="max_overlay_frames" default="50"/>
+  <arg name="use_invalid_mask" default=""/>
+  <arg name="use_depth_edge_rejection" default=""/>
+  <arg name="use_occlusion_gate" default=""/>
+  <arg name="projection_patch_size" default=""/>
+  <arg name="projection_confidence_min" default=""/>
+  <arg name="projection_reject_depth_edges" default=""/>
+  <arg name="projection_occlusion_epsilon_m" default=""/>
+  <arg name="projection_occlusion_radius_px" default=""/>
   <arg name="publish_localization_tf" default="false"/>
   <arg name="localization_topic" default="/localization"/>
   <arg name="localization_type" default="odom"/>
@@ -18,6 +50,15 @@
   <arg name="localization_stamp_source_topic" default=""/>
   <arg name="localization_stamp_source_type" default="image"/>
   <arg name="localization_stamp_source_max_age_sec" default="0.05"/>
+  <arg name="run_mapir_index" default="false"/>
+  <arg name="mapir_input_topic" default="/mapir/image_raw"/>
+  <arg name="mapir_raw_topic" default="/mapir/indices/veg_index/image_raw"/>
+  <arg name="mapir_preview_topic" default="/mapir/indices_color/veg_index"/>
+  <arg name="mapir_filter_set" default="OCN"/>
+  <arg name="mapir_nir_channel" default="-1"/>
+  <arg name="mapir_visible_channel" default="-1"/>
+  <arg name="mapir_colorize_min" default="0.20"/>
+  <arg name="mapir_colorize_max" default="0.75"/>
   <arg name="run_ufomap" default="false"/>
   <arg name="ufomap_pkg" default="ufomap_mapping"/>
   <arg name="ufomap_depth_levels" default="16"/>
@@ -30,6 +71,27 @@
 
   <param name="use_sim_time" value="$(arg use_sim_time)"/>
 
+  <group if="$(arg play_bag)">
+    <group if="$(arg relay_bag_tf)">
+      <node pkg="topic_tools" type="relay" name="tf_bag_relay"
+            args="$(arg bag_tf_topic) /tf"
+            launch-prefix="bash -c 'sleep 2 &amp;&amp; exec $0 $@' --"/>
+      <node pkg="topic_tools" type="relay" name="tf_static_bag_relay"
+            args="$(arg bag_tf_static_topic) /tf_static"
+            launch-prefix="bash -c 'sleep 2 &amp;&amp; exec $0 $@' --"/>
+    </group>
+
+    <node pkg="rosbag" type="play" name="rosbag_play" output="screen"
+          args="--clock
+                --rate $(arg rate)
+                --start $(arg start_sec)
+                $(eval '--duration ' + arg('duration_sec') if arg('duration_sec') != '' else '')
+                $(eval '--pause' if arg('pause') == 'true' else '')
+                $(eval '--loop' if arg('loop') == 'true' else '')
+                --delay 4.0
+                $(arg bag_path)
+                $(arg bag_path_extra)"/>
+  </group>
 
   <group if="$(arg use_urdf)">
     <param name="robot_description" command="$(find xacro)/xacro '$(arg urdf_path)'" />
@@ -53,6 +115,18 @@
     </node>
   </group>
 
+  <group if="$(arg run_mapir_index)">
+    <node pkg="entfac_fusion_ros" type="mapir_index_node.py" name="mapir_index_node" output="screen">
+      <param name="input_topic" value="$(arg mapir_input_topic)"/>
+      <param name="raw_topic" value="$(arg mapir_raw_topic)"/>
+      <param name="preview_topic" value="$(arg mapir_preview_topic)"/>
+      <param name="filter_set" value="$(arg mapir_filter_set)"/>
+      <param name="nir_channel" value="$(arg mapir_nir_channel)"/>
+      <param name="visible_channel" value="$(arg mapir_visible_channel)"/>
+      <param name="colorize_min" value="$(arg mapir_colorize_min)"/>
+      <param name="colorize_max" value="$(arg mapir_colorize_max)"/>
+    </node>
+  </group>
 
   <rosparam command="load"
             file="$(find entfac_fusion_ros)/config/core.yaml"
@@ -63,12 +137,67 @@
   <rosparam command="load"
             file="$(arg dataset_config)"
             ns="colored_pcl_node"/>
+  <group if="$(eval arg('semantic_topic') != '')">
+    <param name="colored_pcl_node/semantic_topic" value="$(arg semantic_topic)"/>
+  </group>
+  <group if="$(eval arg('semantic_input_type') != '')">
+    <param name="colored_pcl_node/semantic_input_type" value="$(arg semantic_input_type)"/>
+  </group>
+  <group if="$(eval arg('camera_info_topic') != '')">
+    <param name="colored_pcl_node/camera_info" value="$(arg camera_info_topic)"/>
+  </group>
   <param name="colored_pcl_node/target_frame" value="$(arg target_frame)"/>
   <group if="$(eval arg('camera_info_txt') != '')">
     <param name="colored_pcl_node/camera_info_txt" value="$(arg camera_info_txt)"/>
   </group>
   <group if="$(eval arg('camera_frame') != '')">
     <param name="colored_pcl_node/camera_frame" value="$(arg camera_frame)"/>
+  </group>
+  <group if="$(eval arg('depth_input_topic') != '')">
+    <param name="colored_pcl_node/depth_input_topic" value="$(arg depth_input_topic)"/>
+  </group>
+  <group if="$(eval arg('projection_invalid_mask_topic') != '')">
+    <param name="colored_pcl_node/projection_invalid_mask_topic" value="$(arg projection_invalid_mask_topic)"/>
+  </group>
+  <group if="$(eval arg('projection_invalid_mask_value') != '')">
+    <param name="colored_pcl_node/projection_invalid_mask_value" value="$(arg projection_invalid_mask_value)"/>
+  </group>
+  <group if="$(eval arg('experiment_variant_name') != '')">
+    <param name="colored_pcl_node/experiment_variant_name" value="$(arg experiment_variant_name)"/>
+  </group>
+  <group if="$(eval arg('bag_name') != '')">
+    <param name="colored_pcl_node/bag_name" value="$(arg bag_name)"/>
+  </group>
+  <group if="$(eval arg('results_dir') != '')">
+    <param name="colored_pcl_node/results_dir" value="$(arg results_dir)"/>
+  </group>
+  <param name="colored_pcl_node/enable_metrics_csv" value="$(arg enable_metrics_csv)"/>
+  <param name="colored_pcl_node/enable_overlay_export" value="$(arg enable_overlay_export)"/>
+  <param name="colored_pcl_node/overlay_stride" value="$(arg overlay_stride)"/>
+  <param name="colored_pcl_node/max_overlay_frames" value="$(arg max_overlay_frames)"/>
+  <group if="$(eval arg('use_invalid_mask') != '')">
+    <param name="colored_pcl_node/use_invalid_mask" value="$(arg use_invalid_mask)"/>
+  </group>
+  <group if="$(eval arg('use_depth_edge_rejection') != '')">
+    <param name="colored_pcl_node/use_depth_edge_rejection" value="$(arg use_depth_edge_rejection)"/>
+  </group>
+  <group if="$(eval arg('use_occlusion_gate') != '')">
+    <param name="colored_pcl_node/use_occlusion_gate" value="$(arg use_occlusion_gate)"/>
+  </group>
+  <group if="$(eval arg('projection_patch_size') != '')">
+    <param name="colored_pcl_node/projection_patch_size" value="$(arg projection_patch_size)"/>
+  </group>
+  <group if="$(eval arg('projection_confidence_min') != '')">
+    <param name="colored_pcl_node/projection_confidence_min" value="$(arg projection_confidence_min)"/>
+  </group>
+  <group if="$(eval arg('projection_reject_depth_edges') != '')">
+    <param name="colored_pcl_node/projection_reject_depth_edges" value="$(arg projection_reject_depth_edges)"/>
+  </group>
+  <group if="$(eval arg('projection_occlusion_epsilon_m') != '')">
+    <param name="colored_pcl_node/projection_occlusion_epsilon_m" value="$(arg projection_occlusion_epsilon_m)"/>
+  </group>
+  <group if="$(eval arg('projection_occlusion_radius_px') != '')">
+    <param name="colored_pcl_node/projection_occlusion_radius_px" value="$(arg projection_occlusion_radius_px)"/>
   </group>
 
   <node pkg="entfac_fusion_ros" type="colored_pcl_node.py" name="colored_pcl_node"
