@@ -19,10 +19,26 @@ VARIANTS = {
         "projection_reject_depth_edges": "false",
         "projection_occlusion_epsilon_m": "0.10",
     },
-    "mask_only": {
+    "mask": {
         "use_invalid_mask": "true",
         "use_depth_edge_rejection": "false",
         "use_occlusion_gate": "false",
+        "projection_patch_size": "1",
+        "projection_reject_depth_edges": "false",
+        "projection_occlusion_epsilon_m": "0.10",
+    },
+    "edge": {
+        "use_invalid_mask": "false",
+        "use_depth_edge_rejection": "true",
+        "use_occlusion_gate": "false",
+        "projection_patch_size": "3",
+        "projection_reject_depth_edges": "true",
+        "projection_occlusion_epsilon_m": "0.10",
+    },
+    "occlusion": {
+        "use_invalid_mask": "false",
+        "use_depth_edge_rejection": "false",
+        "use_occlusion_gate": "true",
         "projection_patch_size": "1",
         "projection_reject_depth_edges": "false",
         "projection_occlusion_epsilon_m": "0.10",
@@ -31,6 +47,22 @@ VARIANTS = {
         "use_invalid_mask": "true",
         "use_depth_edge_rejection": "true",
         "use_occlusion_gate": "false",
+        "projection_patch_size": "3",
+        "projection_reject_depth_edges": "true",
+        "projection_occlusion_epsilon_m": "0.10",
+    },
+    "mask_occlusion": {
+        "use_invalid_mask": "true",
+        "use_depth_edge_rejection": "false",
+        "use_occlusion_gate": "true",
+        "projection_patch_size": "1",
+        "projection_reject_depth_edges": "false",
+        "projection_occlusion_epsilon_m": "0.10",
+    },
+    "edge_occlusion": {
+        "use_invalid_mask": "false",
+        "use_depth_edge_rejection": "true",
+        "use_occlusion_gate": "true",
         "projection_patch_size": "3",
         "projection_reject_depth_edges": "true",
         "projection_occlusion_epsilon_m": "0.10",
@@ -68,6 +100,12 @@ def _launch_command_prefix(args) -> str:
     return " ".join(
         shlex.quote(part) for part in ["roslaunch", args.fusion_package, args.launch_file]
     )
+
+
+def _resolve_results_dir(results_dir_arg: str, study_name: str) -> Path:
+    """Return an absolute host path for ablation outputs."""
+    base = Path(results_dir_arg) if results_dir_arg else Path("results") / study_name
+    return base.resolve()
 
 
 def _command(bag: str, variant: str, results_dir: Path, args) -> str:
@@ -108,7 +146,7 @@ def main() -> int:
         default=[],
         help="Additional bags passed through the launch localization_bag/bag_path_extra arg",
     )
-    parser.add_argument("--variants", nargs="+", default=["naive", "mask_only", "mask_edge", "full"])
+    parser.add_argument("--variants", nargs="+", default=list(VARIANTS.keys()))
     parser.add_argument(
         "--base-config",
         default="$(find entfac_fusion_ros)/config/forestsphere/icnf_curt_mini.yaml",
@@ -152,7 +190,7 @@ def main() -> int:
     if unknown:
         raise SystemExit(f"Unknown variants: {', '.join(unknown)}")
 
-    results_dir = Path(args.results_dir) if args.results_dir else Path("results") / args.study_name
+    results_dir = _resolve_results_dir(args.results_dir, args.study_name)
     results_dir.mkdir(parents=True, exist_ok=True)
     commands = [
         _command(bag, variant, results_dir, args)
