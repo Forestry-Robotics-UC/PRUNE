@@ -143,11 +143,15 @@ def log_correction_statuses(node) -> None:
     )
 
 
-def render_startup_table(node) -> str:
+def render_startup_table(
+    node,
+    save_ply_service_name: str,
+    set_ply_recording_service_name: str,
+) -> str:
     """Render the startup summary table shown after subscriber registration."""
     services = (
-        f"save_ply={rospy.resolve_name('~save_ply')} "
-        f"set_ply_recording={rospy.resolve_name('~set_ply_recording')}"
+        f"save_ply={save_ply_service_name} "
+        f"set_ply_recording={set_ply_recording_service_name}"
     )
     ply_target = node.ply_target_frame or "-"
     ply = (
@@ -157,8 +161,8 @@ def render_startup_table(node) -> str:
     )
     help_text = "\n".join(
         [
-            f"rosservice call {rospy.resolve_name('~save_ply')} \"{{}}\"",
-            f"rosservice call {rospy.resolve_name('~set_ply_recording')} \"data: true\"",
+            f"rosservice call {save_ply_service_name} \"{{}}\"",
+            f"rosservice call {set_ply_recording_service_name} \"data: true\"",
         ]
     )
 

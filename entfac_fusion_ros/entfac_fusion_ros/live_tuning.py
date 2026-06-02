@@ -6,7 +6,9 @@ Consolidates all parameter validation and application logic to prevent divergenc
 between the two update paths.
 """
 
-from typing import Callable, Any
+from typing import Any, Callable
+
+import rospy
 
 
 # Tuning parameter definition: (attr_name, type_hint, validator_fn)
@@ -28,6 +30,59 @@ TUNING_PARAMS = [
     ("tracked_reprojection_min_image_edge", float, lambda v: 0.0 <= v <= 1.0),
     ("tracked_reprojection_min_tracks", int, lambda v: v >= 10),
 ]
+
+
+def _get_live_param_float(name: str, fallback: float) -> float:
+    try:
+        return float(rospy.get_param(name, fallback))
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+def _get_live_param_int(name: str, fallback: int) -> int:
+    try:
+        return int(rospy.get_param(name, fallback))
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+def _get_live_param_bool(name: str, fallback: bool) -> bool:
+    try:
+        value = rospy.get_param(name, fallback)
+    except Exception:  # noqa: BLE001
+        return fallback
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def refresh_tuning_params_from_rospy(
+    node_instance: Any,
+    *,
+    namespace: str = "~",
+    log_fn: Callable[[str], None] = None,
+) -> bool:
+    """Refresh tuning parameters from the ROS parameter server.
+
+    This keeps the ROS bridge in the shared tuning module so the node does not
+    maintain a parallel get_param/type-dispatch implementation.
+    """
+    def get_value(attr_name: str, default: Any):
+        type_hint = next(type_hint for name, type_hint, _ in TUNING_PARAMS if name == attr_name)
+        param_name = f"{namespace}{attr_name}" if namespace else attr_name
+        if type_hint is int:
+            return _get_live_param_int(param_name, default)
+        if type_hint is float:
+            return _get_live_param_float(param_name, default)
+        if type_hint is bool:
+            return _get_live_param_bool(param_name, default)
+        return rospy.get_param(param_name, default)
+
+    return apply_tuning_params(node_instance, get_value, log_fn)
 
 
 def apply_tuning_params(

@@ -79,27 +79,30 @@ def _gather_patch_samples(
 
     patch_size = _normalize_patch_size(patch_size)
     radius = patch_size // 2
-    n = int(u.size)
-    k = int(patch_size * patch_size)
     h, w = image.shape
 
-    samples = np.zeros((n, k), dtype=image.dtype)
-    valid = np.zeros((n, k), dtype=bool)
-    conf_samples = np.zeros((n, k), dtype=np.float32) if confidence is not None else None
+    # Build all (dy, dx) offsets vectorised; ordering matches the original
+    # dy-outer dx-inner loop so column indices stay identical.
+    offsets = np.arange(-radius, radius + 1, dtype=np.int32)
+    dy_offsets, dx_offsets = np.meshgrid(offsets, offsets, indexing="ij")
+    dy_offsets = dy_offsets.ravel()  # (k,)
+    dx_offsets = dx_offsets.ravel()  # (k,)
 
-    idx = 0
-    for dy in range(-radius, radius + 1):
-        vv = v + int(dy)
-        valid_v = (vv >= 0) & (vv < h)
-        for dx in range(-radius, radius + 1):
-            uu = u + int(dx)
-            mask = valid_v & (uu >= 0) & (uu < w)
-            valid[:, idx] = mask
-            if np.any(mask):
-                samples[mask, idx] = image[vv[mask], uu[mask]]
-                if conf_samples is not None:
-                    conf_samples[mask, idx] = confidence[vv[mask], uu[mask]]
-            idx += 1
+    vv = v[:, None] + dy_offsets[None, :]  # (n, k)
+    uu = u[:, None] + dx_offsets[None, :]  # (n, k)
+    valid = (vv >= 0) & (vv < h) & (uu >= 0) & (uu < w)  # (n, k)
+
+    # Clamp for safe gather; downstream code always masks with `valid`
+    # so values at out-of-bounds positions are never used.
+    vv_c = np.clip(vv, 0, h - 1)
+    uu_c = np.clip(uu, 0, w - 1)
+
+    samples = image[vv_c, uu_c]  # (n, k)
+    conf_samples = (
+        confidence[vv_c, uu_c].astype(np.float32, copy=False)
+        if confidence is not None
+        else None
+    )
 
     return samples, valid, conf_samples
 
@@ -146,36 +149,44 @@ def sample_projected_label_patches(
     )
 
     n = int(u.size)
-    labels_out = np.empty(n, dtype=np.int64)
-    conf_out = np.zeros(n, dtype=np.float32)
-    for i in range(n):
-        keep = valid[i]
-        vals = samples[i, keep].astype(np.int64, copy=False)
-        if vals.size == 0:
-            labels_out[i] = -1
-            conf_out[i] = 0.0
-            continue
-        if conf_samples is not None:
-            weights = np.clip(
-                conf_samples[i, keep].astype(np.float64, copy=False),
-                0.0,
-                None,
-            )
-            if not np.any(weights > 0.0):
-                weights = np.ones(vals.shape[0], dtype=np.float64)
-        else:
-            weights = np.ones(vals.shape[0], dtype=np.float64)
+    no_valid = ~valid.any(axis=1)  # (n,) — points with no valid neighbours
 
-        unique, inverse = np.unique(vals, return_inverse=True)
-        scores = np.bincount(
-            inverse,
-            weights=weights,
-            minlength=int(unique.size),
-        ).astype(np.float64, copy=False)
-        best = int(np.argmax(scores))
-        labels_out[i] = int(unique[best])
-        denom = float(np.sum(weights))
-        conf_out[i] = float(scores[best] / denom) if denom > 0.0 else 0.0
+    row_ids, col_ids = np.nonzero(valid)  # (m,)
+    flat_vals = samples[row_ids, col_ids].astype(np.int64)
+
+    if flat_vals.size == 0:
+        return np.full(n, -1, dtype=np.int64), np.zeros(n, dtype=np.float32)
+
+    if conf_samples is not None:
+        flat_w = np.clip(conf_samples[row_ids, col_ids].astype(np.float64), 0.0, None)
+        # Fall back to uniform weights for rows where every weight is zero.
+        row_wsum = np.zeros(n, dtype=np.float64)
+        np.add.at(row_wsum, row_ids, flat_w)
+        fallback = row_wsum[row_ids] == 0.0
+        if fallback.any():
+            flat_w = flat_w.copy()
+            flat_w[fallback] = 1.0
+    else:
+        flat_w = np.ones(len(row_ids), dtype=np.float64)
+
+    # Shift labels to [0, n_bins) so we can use bincount on a flat 2-D index.
+    label_min = int(flat_vals.min())
+    vals_shifted = flat_vals - label_min
+    n_bins = int(vals_shifted.max()) + 1
+
+    linear_idx = row_ids * n_bins + vals_shifted
+    flat_scores = np.bincount(linear_idx, weights=flat_w, minlength=n * n_bins)
+    scores = flat_scores.reshape(n, n_bins)
+
+    best = np.argmax(scores, axis=1)  # (n,)
+    labels_out = (best + label_min).astype(np.int64)
+    labels_out[no_valid] = -1
+
+    total_w = scores.sum(axis=1)
+    conf_out = np.where(total_w > 0.0, scores[np.arange(n), best] / total_w, 0.0).astype(
+        np.float32
+    )
+    conf_out[no_valid] = 0.0
 
     return labels_out, conf_out
 

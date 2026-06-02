@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 DROP_REASONS = {
     "none",
     "pair_dt_too_large",
+    "queue_full",
     "missing_tf",
     "missing_camera_info",
     "empty_cloud",
@@ -96,7 +97,12 @@ class FrameMetrics:
     def to_row(self) -> Dict[str, object]:
         if self.drop_reason not in DROP_REASONS:
             raise ValueError(f"unsupported drop_reason: {self.drop_reason}")
-        return {name: getattr(self, name) for name in self.fieldnames()}
+        row = {name: getattr(self, name) for name in self.fieldnames()}
+        projected = max(int(self.num_points_projected_in_image), 1)
+        row["would_hit_invalid_mask_ratio"] = float(self.num_would_hit_invalid_mask) / projected
+        row["would_hit_depth_edge_ratio"] = float(self.num_would_hit_depth_edge) / projected
+        row["would_fail_occlusion_ratio"] = float(self.num_would_fail_occlusion) / projected
+        return row
 
 
 class MetricsCsvLogger:

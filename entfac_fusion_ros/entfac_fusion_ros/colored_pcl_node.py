@@ -105,6 +105,7 @@ import cProfile
 import io
 import pstats
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -112,6 +113,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+try:
+    from scipy import ndimage as _scipy_ndimage
+except Exception:  # noqa: BLE001
+    _scipy_ndimage = None
 import rospy
 import tf2_ros
 from message_filters import ApproximateTimeSynchronizer, Cache, Subscriber
@@ -165,6 +170,7 @@ from entfac_fusion_core.utils.validation import (
     require_homogeneous_transform,
 )
 
+from entfac_fusion_ros import live_tuning
 from entfac_fusion_ros.conversions import (
     image_to_numpy,
     pointcloud2_to_xyz,
@@ -462,17 +468,14 @@ class ColoredPclNode:
             self._compat_lidar_points_status = "active (ouster sensor->lidar)"
         else:
             self._compat_lidar_points_status = "disabled"
-        self._undistort_requested = bool(self.undistort_semantic)
         self._undistort_status = (
-            "requested" if self._undistort_requested else "disabled"
+            "requested" if self.undistort_semantic else "disabled"
         )
-        self._rolling_shutter_requested = bool(self.rolling_shutter_enable)
         self._rolling_shutter_status = (
-            "requested" if self._rolling_shutter_requested else "disabled"
+            "requested" if self.rolling_shutter_enable else "disabled"
         )
-        self._lidar_deskew_requested = bool(self.lidar_deskew_enable)
         self._lidar_deskew_status = (
-            "requested" if self._lidar_deskew_requested else "disabled"
+            "requested" if self.lidar_deskew_enable else "disabled"
         )
 
         self.conf_topic = self._get_param_str(
@@ -946,9 +949,8 @@ class ColoredPclNode:
         )
         if self.online_calibration_log_period_sec < 0.0:
             raise ValueError("~online_calibration_log_period_sec must be >= 0")
-        self._online_calibration_requested = bool(self.online_calibration_enable)
         self._online_calibration_status = (
-            "requested" if self._online_calibration_requested else "disabled"
+            "requested" if self.online_calibration_enable else "disabled"
         )
 
         # Fixed debug projection settings to avoid extra parameters.
@@ -1185,7 +1187,8 @@ class ColoredPclNode:
         self._lidar_deskew_warn_at = 0.0
         self._lidar_deskew_missing_time_warn_at = 0.0
         self._live_param_refresh_period_sec = 0.5
-        self._live_param_last_refresh_at = 0.0
+        self._live_tuning_lock = threading.RLock()
+        self._live_tuning_timer = None
         self._dynamic_reconfigure_server = None
         self._dynamic_reconfigure_initialized = False
 
@@ -1301,6 +1304,7 @@ class ColoredPclNode:
         )
         if self.debug:
             self._log_param_report()
+        self._start_live_tuning_timer()
 
     # ----------------------------
     # Param helpers (with meta)
@@ -1373,7 +1377,7 @@ class ColoredPclNode:
             else None
         )
         self._rolling_shutter_status = (
-            "disabled" if not self._rolling_shutter_requested else "requested"
+            "disabled" if not self.rolling_shutter_enable else "requested"
         )
         if self.rolling_shutter_enable:
             if not self.imu_topic:
@@ -1411,7 +1415,7 @@ class ColoredPclNode:
                         queue_size=2000,
                     )
         self._lidar_deskew_status = (
-            "disabled" if not self._lidar_deskew_requested else "requested"
+            "disabled" if not self.lidar_deskew_enable else "requested"
         )
         if self.lidar_deskew_enable:
             if not self.lidar_imu_topic:
@@ -1523,105 +1527,30 @@ class ColoredPclNode:
 
         get_value(attr, default, validator) should return value if valid, else raise.
         """
-        changes = []
+        log_fn = None if not log_source else (lambda message: self._log.info(log_source, "%s", message))
+        return live_tuning.apply_tuning_params(self, get_value, log_fn)
 
-        def _update(attr: str, default, validator) -> None:
-            try:
-                value = get_value(attr, default)
-                if not validator(value):
-                    return
-            except Exception:  # noqa: BLE001
-                return
-            current = getattr(self, attr)
-            if current != value:
-                setattr(self, attr, value)
-                changes.append(f"{attr}={value}")
-
-        _update("projection_patch_size", self.projection_patch_size, lambda v: v >= 1 and (v % 2) == 1)
-        _update("projection_confidence_min", self.projection_confidence_min, lambda v: 0.0 <= v <= 1.0)
-        _update("projection_occlusion_epsilon_m", self.projection_occlusion_epsilon_m, lambda v: v >= 0.0)
-        _update("projection_occlusion_radius_px", self.projection_occlusion_radius_px, lambda v: v >= 0)
-        _update("projection_reject_depth_edges", self.projection_reject_depth_edges, lambda v: isinstance(v, bool))
-        _update("projection_depth_edge_thresh", self.projection_depth_edge_thresh, lambda v: 0.0 <= v <= 1.0)
-        _update("projection_depth_edge_radius_px", self.projection_depth_edge_radius_px, lambda v: v >= 0)
-        _update("debug_project_lidar", self.debug_project_lidar, lambda v: isinstance(v, bool))
-        _update("debug_project_lidar_stride", self.debug_project_lidar_stride, lambda v: v >= 1)
-        _update("debug_project_lidar_radius", self.debug_project_lidar_radius, lambda v: v >= 0)
-        _update("debug_project_lidar_outline_only", self.debug_project_lidar_outline_only, lambda v: isinstance(v, bool))
-        _update("tracked_reprojection_fb_thresh_px", self.tracked_reprojection_fb_thresh_px, lambda v: v > 0.0)
-        _update("tracked_reprojection_depth_edge_thresh", self.tracked_reprojection_depth_edge_thresh, lambda v: 0.0 <= v <= 1.0)
-        _update("tracked_reprojection_min_image_edge", self.tracked_reprojection_min_image_edge, lambda v: 0.0 <= v <= 1.0)
-        _update("tracked_reprojection_min_tracks", self.tracked_reprojection_min_tracks, lambda v: v >= 10)
-
-        if self.debug_project_lidar and self._debug_proj_pub is None:
-            self._debug_proj_pub = rospy.Publisher(
-                self.debug_projected_topic, Image, queue_size=1
+    def _refresh_live_tuning_params(self, _event=None) -> None:
+        with self._live_tuning_lock:
+            live_tuning.refresh_tuning_params_from_rospy(
+                self,
+                namespace="~",
+                log_fn=lambda message: self._log.info(
+                    "_refresh_live_tuning_params", "%s", message
+                ),
             )
 
-        if changes and log_source:
-            self._log.info(log_source, "Live tuning update: %s", ", ".join(changes))
-        return bool(changes)
-
-    def _dynamic_reconfigure_callback(self, config, _level):
-        initialized = self._dynamic_reconfigure_initialized
-
-        patch_size = int(config["projection_patch_size"])
-        if patch_size < 1:
-            patch_size = 1
-        if (patch_size % 2) == 0:
-            patch_size = patch_size + 1 if patch_size < 9 else patch_size - 1
-        config["projection_patch_size"] = patch_size
-
-        def get_from_config(attr: str, default):
-            key = attr
-            if key in config:
-                return config[key]
-            raise KeyError(key)
-
-        self._apply_tuning_params(get_from_config, "_dynamic_reconfigure_callback" if initialized else "")
-        self._dynamic_reconfigure_initialized = True
-        return config
-
-    def _get_live_param_float(self, name: str, fallback: float) -> float:
-        try:
-            return float(rospy.get_param(name, fallback))
-        except Exception:  # noqa: BLE001
-            return fallback
-
-    def _get_live_param_int(self, name: str, fallback: int) -> int:
-        try:
-            return int(rospy.get_param(name, fallback))
-        except Exception:  # noqa: BLE001
-            return fallback
-
-    def _get_live_param_bool(self, name: str, fallback: bool) -> bool:
-        try:
-            return _coerce_bool(rospy.get_param(name, fallback))
-        except Exception:  # noqa: BLE001
-            return fallback
-
-    def _maybe_refresh_live_tuning_params(self) -> None:
-        now = time.time()
-        if (
-            self._live_param_last_refresh_at > 0.0
-            and (now - self._live_param_last_refresh_at) < self._live_param_refresh_period_sec
-        ):
+    def _start_live_tuning_timer(self) -> None:
+        if self._live_param_refresh_period_sec <= 0.0 or self._live_tuning_timer is not None:
             return
-        self._live_param_last_refresh_at = now
-
-        def get_from_rospy(attr: str, default):
-            if attr == "projection_patch_size":
-                return self._get_live_param_int(f"~{attr}", default)
-            elif attr in {"projection_confidence_min", "projection_occlusion_epsilon_m", "projection_depth_edge_thresh", "tracked_reprojection_fb_thresh_px", "tracked_reprojection_depth_edge_thresh", "tracked_reprojection_min_image_edge"}:
-                return self._get_live_param_float(f"~{attr}", default)
-            elif attr in {"projection_occlusion_radius_px", "projection_depth_edge_radius_px", "debug_project_lidar_stride", "debug_project_lidar_radius", "tracked_reprojection_min_tracks"}:
-                return self._get_live_param_int(f"~{attr}", default)
-            else:
-                return self._get_live_param_bool(f"~{attr}", default)
-
-        self._apply_tuning_params(get_from_rospy, "_maybe_refresh_live_tuning_params")
+        self._refresh_live_tuning_params()
+        self._live_tuning_timer = rospy.Timer(
+            rospy.Duration(self._live_param_refresh_period_sec),
+            self._refresh_live_tuning_params,
+        )
 
     def _parse_semantic_inputs(
+
         self, sem_msg, conf_msg, invalid_mask_msg, callback_name: str
     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
         """Parse semantic inputs (labels or RGB), confidence, and invalid mask.
@@ -1634,7 +1563,7 @@ class ColoredPclNode:
 
         if self.semantic_input_type == "labels":
             labels = self._parse_semantic_labels(sem_msg)
-            invalid_from_perception = labels == self.perception_invalid_label
+            invalid_from_perception = np.asarray(labels, dtype=np.int64) == int(self.perception_invalid_label)
             if np.any(invalid_from_perception):
                 labels = labels.copy().astype(np.int64)
                 labels[invalid_from_perception] = -1
@@ -1661,8 +1590,8 @@ class ColoredPclNode:
         )
         return labels, packed_img, confidence, projection_invalid_mask, rgb_lut
 
-    def _lidar_validate_inputs(self, sem_msg, lidar_msg) -> Optional[Tuple[rospy.Time, rospy.Time]]:
-        """Validate timestamps and pairing. Returns (chosen_stamp, stamp) or None if invalid."""
+    def _lidar_validate_inputs(self, sem_msg, lidar_msg) -> Optional[rospy.Time]:
+        """Validate timestamps and pairing. Returns stamp or None if invalid."""
         sem_stamp = sem_msg.header.stamp
         lidar_stamp = lidar_msg.header.stamp
         sem_pair_stamp = self._apply_stamp_offset(sem_stamp, self.semantic_time_offset_sec)
@@ -1682,7 +1611,7 @@ class ColoredPclNode:
             "_lidar_callback", sem_stamp, lidar_stamp, "lidar", chosen_stamp, stamp,
             sem_pair_stamp=sem_pair_stamp,
         )
-        return chosen_stamp, stamp
+        return stamp
 
     def _lidar_lookup_transforms(self, lidar_frame: str) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Lookup and cache lidar->camera and lidar->target transforms. Returns (camera_T_lidar, target_T_lidar) or None."""
@@ -1761,6 +1690,7 @@ class ColoredPclNode:
         """Project points and sample labels/colors. Returns (pcl, debug_colors, image_shape, rgb_values)."""
         debug_colors = None
         rgb_values = None
+        debug_projection = None
         if self.debug_project_lidar:
             points_cam_dbg = transform_points(corrected_camera_T_lidar, points)
             debug_colors = self._depth_to_debug_colors(points_cam_dbg[:, 2])
@@ -1797,6 +1727,11 @@ class ColoredPclNode:
             else:
                 labels_in, conf_in = sample_projected_label_patches(
                     labels, u, v, confidence=confidence, patch_size=self.projection_patch_size
+                )
+                debug_projection = (
+                    u.copy(),
+                    v.copy(),
+                    None if conf_in is None else conf_in.astype(np.float32, copy=False).copy(),
                 )
                 invalid_samples = (
                     sample_invalid_mask(projection_invalid_mask, u, v)
@@ -1867,6 +1802,11 @@ class ColoredPclNode:
             rgb_values_in, conf_in = sample_projected_rgb_patches(
                 packed_img, u, v, confidence=confidence, patch_size=self.projection_patch_size
             )
+            debug_projection = (
+                u.copy(),
+                v.copy(),
+                None if conf_in is None else conf_in.astype(np.float32, copy=False).copy(),
+            )
             invalid_samples = (
                 sample_invalid_mask(projection_invalid_mask, u, v)
                 if projection_invalid_mask is not None
@@ -1922,7 +1862,7 @@ class ColoredPclNode:
             rgb_values = rgb_lut[labels_to_uint16(pcl.labels)]
             rgb_lut = None
 
-        return pcl, debug_colors, (h, w), rgb_values
+        return pcl, debug_colors, (h, w), rgb_values, debug_projection
 
     def _lidar_assemble_and_publish(
         self,
@@ -1937,6 +1877,7 @@ class ColoredPclNode:
         include_rgb: bool,
         rgb_values: Optional[np.ndarray],
         rgb_lut: Optional[np.ndarray],
+        debug_projection,
         stamp: rospy.Time,
         sem_msg,
         dt: float,
@@ -1945,9 +1886,13 @@ class ColoredPclNode:
         h, w = image_shape
 
         # Publish debug visualizations
-        if self.debug_range_view and semantic_debug_img is not None and pcl.points_xyz.shape[0]:
-            debug_u = np.arange(w, dtype=np.int32)
-            debug_v = np.arange(h, dtype=np.int32)
+        if (
+            self.debug_range_view
+            and semantic_debug_img is not None
+            and pcl.points_xyz.shape[0]
+            and debug_projection is not None
+        ):
+            debug_u, debug_v, debug_confidence = debug_projection
             self._publish_range_view_debug(
                 sem_img=semantic_debug_img,
                 sem_type=semantic_debug_type,
@@ -1957,7 +1902,7 @@ class ColoredPclNode:
                 image_shape=(h, w),
                 u=debug_u,
                 v=debug_v,
-                point_confidence=None,
+                point_confidence=debug_confidence,
                 header=sem_msg.header,
             )
         if self.tracked_reprojection_enable and semantic_debug_img is not None:
@@ -3298,11 +3243,13 @@ class ColoredPclNode:
         sem_edges = self._semantic_edge_map(sem_img, sem_type)
         img_edge_strength = np.asarray(sem_edges[py, px], dtype=np.float32)
         edge_keep = img_edge_strength >= float(self.tracked_reprojection_min_image_edge)
-        if np.any(edge_keep):
-            prev_xy = prev_xy[edge_keep]
-            next_xy = next_xy[edge_keep]
-            px = px[edge_keep]
-            py = py[edge_keep]
+        if not np.any(edge_keep):
+            self._reset_tracked_reprojection_state(gray)
+            return
+        prev_xy = prev_xy[edge_keep]
+        next_xy = next_xy[edge_keep]
+        px = px[edge_keep]
+        py = py[edge_keep]
         if next_xy.shape[0] == 0:
             self._reset_tracked_reprojection_state(gray)
             return
@@ -3466,9 +3413,23 @@ class ColoredPclNode:
         if radius_px <= 0:
             return image
         if op == "min":
+            if _scipy_ndimage is not None:
+                return _scipy_ndimage.minimum_filter(
+                    image,
+                    size=2 * radius_px + 1,
+                    mode="constant",
+                    cval=np.inf,
+                ).astype(np.float32, copy=False)
             out = np.full_like(image, np.inf, dtype=np.float32)
             reducer = np.minimum
         elif op == "max":
+            if _scipy_ndimage is not None:
+                return _scipy_ndimage.maximum_filter(
+                    image,
+                    size=2 * radius_px + 1,
+                    mode="constant",
+                    cval=0.0,
+                ).astype(np.float32, copy=False)
             out = np.zeros_like(image, dtype=np.float32)
             reducer = np.maximum
         else:
@@ -4133,10 +4094,14 @@ class ColoredPclNode:
         self._log.debug("status", "\n%s", table)
 
     def _render_startup_table(self) -> str:
-        return _render_startup_table_helper(self)
+        return _render_startup_table_helper(
+            self,
+            rospy.resolve_name("~save_ply"),
+            rospy.resolve_name("~set_ply_recording"),
+        )
 
-    def _depth_validate_inputs(self, sem_msg, depth_msg) -> Optional[Tuple[rospy.Time, rospy.Time]]:
-        """Validate timestamps and pairing. Returns (chosen_stamp, stamp) or None if invalid."""
+    def _depth_validate_inputs(self, sem_msg, depth_msg) -> Optional[rospy.Time]:
+        """Validate timestamps and pairing. Returns stamp or None if invalid."""
         sem_stamp = sem_msg.header.stamp
         depth_stamp = depth_msg.header.stamp
         sem_pair_stamp = self._apply_stamp_offset(sem_stamp, self.semantic_time_offset_sec)
@@ -4156,7 +4121,7 @@ class ColoredPclNode:
             "_depth_callback", sem_stamp, depth_stamp, "depth", chosen_stamp, stamp,
             sem_pair_stamp=sem_pair_stamp,
         )
-        return chosen_stamp, stamp
+        return stamp
 
     def _depth_lookup_transforms(self) -> Optional[np.ndarray]:
         """Lookup and cache depth->target transform. Returns target_T_depth or None."""
@@ -4287,13 +4252,11 @@ class ColoredPclNode:
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None, invalid_mask_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("depth_callback"):
-            self._maybe_refresh_live_tuning_params()
-
             # PHASE 1: Validate inputs and timestamps
             result = self._depth_validate_inputs(sem_msg, depth_msg)
             if result is None:
                 return
-            chosen_stamp, stamp = result
+            stamp = result
 
             # PHASE 2: Lookup transforms
             self._current_depth_frame = depth_msg.header.frame_id
@@ -4395,6 +4358,7 @@ class ColoredPclNode:
                 include_rgb=include_rgb,
                 rgb_values=rgb_values,
                 rgb_lut=rgb_lut,
+                debug_projection=debug_projection,
                 stamp=stamp,
                 dt=time.perf_counter() - t0,
             )
@@ -4402,13 +4366,11 @@ class ColoredPclNode:
     def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None, invalid_mask_msg=None):
         t0 = time.perf_counter()
         with self._maybe_profile("lidar_callback"):
-            self._maybe_refresh_live_tuning_params()
-
             # PHASE 1: Validate inputs and timestamps
             result = self._lidar_validate_inputs(sem_msg, lidar_msg)
             if result is None:
                 return
-            chosen_stamp, stamp = result
+            stamp = result
 
             # PHASE 2: Lookup transforms
             transforms = self._lidar_lookup_transforms(lidar_msg.header.frame_id)
@@ -4439,11 +4401,22 @@ class ColoredPclNode:
                 intrinsics = self.intrinsics
 
             # PHASE 4: Parse and process LiDAR points
-            lidar_stamp = sem_msg.header.stamp
+            lidar_stamp = lidar_msg.header.stamp
+            if not self._lidar_frame and lidar_msg.header.frame_id:
+                self._lidar_frame = lidar_msg.header.frame_id
             if self.lidar_deskew_enable:
-                points, t_raw = pointcloud2_to_xyz_t(
-                    lidar_msg, time_field=self.lidar_time_field
-                )
+                try:
+                    points, t_raw = pointcloud2_to_xyz_t(
+                        lidar_msg, time_field=self.lidar_time_field
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self._log.warn(
+                        "_lidar_callback",
+                        "Failed to parse LiDAR time field %r: %s",
+                        self.lidar_time_field,
+                        exc,
+                    )
+                    return
                 points = self._apply_lidar_points_compat(points)
                 points = self._deskew_lidar_points(points, t_raw, lidar_stamp)
             else:
@@ -4465,7 +4438,7 @@ class ColoredPclNode:
                 )
 
             # PHASE 5: Projection & Sampling
-            pcl, debug_colors, image_shape, rgb_values = self._lidar_project_and_sample(
+            pcl, debug_colors, image_shape, rgb_values, debug_projection = self._lidar_project_and_sample(
                 points=points,
                 labels=labels,
                 packed_img=packed_img,
