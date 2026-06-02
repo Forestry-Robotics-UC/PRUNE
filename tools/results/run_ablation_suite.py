@@ -85,9 +85,6 @@ def _command(bag: str, variant: str, results_dir: Path, args) -> str:
         "bag_name": args.bag_name or _bag_name(bag),
         "results_dir": str(results_dir),
         "enable_metrics_csv": "true",
-        "enable_overlay_export": str(args.enable_overlays).lower(),
-        "overlay_stride": str(args.overlay_stride),
-        "max_overlay_frames": str(args.max_overlay_frames),
         "projection_confidence_min": str(args.projection_confidence_min),
     }
     if extra_bags:
@@ -147,9 +144,6 @@ def main() -> int:
         default=0.0,
         help="rosbag play duration in bag seconds; 0 plays to the end",
     )
-    parser.add_argument("--enable-overlays", action="store_true")
-    parser.add_argument("--overlay-stride", type=int, default=10)
-    parser.add_argument("--max-overlay-frames", type=int, default=50)
     parser.add_argument("--projection-confidence-min", type=float, default=0.0)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()

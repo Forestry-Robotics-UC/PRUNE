@@ -31,9 +31,6 @@
   <arg name="bag_name" default=""/>
   <arg name="results_dir" default=""/>
   <arg name="enable_metrics_csv" default="false"/>
-  <arg name="enable_overlay_export" default="false"/>
-  <arg name="overlay_stride" default="10"/>
-  <arg name="max_overlay_frames" default="50"/>
   <arg name="use_invalid_mask" default=""/>
   <arg name="use_depth_edge_rejection" default=""/>
   <arg name="use_occlusion_gate" default=""/>
@@ -172,9 +169,6 @@
     <param name="colored_pcl_node/results_dir" value="$(arg results_dir)"/>
   </group>
   <param name="colored_pcl_node/enable_metrics_csv" value="$(arg enable_metrics_csv)"/>
-  <param name="colored_pcl_node/enable_overlay_export" value="$(arg enable_overlay_export)"/>
-  <param name="colored_pcl_node/overlay_stride" value="$(arg overlay_stride)"/>
-  <param name="colored_pcl_node/max_overlay_frames" value="$(arg max_overlay_frames)"/>
   <group if="$(eval arg('use_invalid_mask') != '')">
     <param name="colored_pcl_node/use_invalid_mask" value="$(arg use_invalid_mask)"/>
   </group>
