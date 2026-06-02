@@ -414,13 +414,17 @@ def _coerce_summary_row(row: Mapping[str, str]) -> Dict[str, object]:
 def _variant_order(variant: str) -> tuple[int, str]:
     order = {
         "naive": 0,
-        "mask_only": 1,
-        "mask_edge": 2,
-        "full": 3,
-        "patch1_full": 4,
-        "patch3_full": 5,
-        "patch5_full": 6,
-        "confidence_sweep": 7,
+        "mask": 1,
+        "edge": 2,
+        "occlusion": 3,
+        "mask_edge": 4,
+        "mask_occlusion": 5,
+        "edge_occlusion": 6,
+        "full": 7,
+        "patch1_full": 8,
+        "patch3_full": 9,
+        "patch5_full": 10,
+        "confidence_sweep": 11,
     }
     return order.get(variant, 100), variant
 
@@ -428,8 +432,12 @@ def _variant_order(variant: str) -> tuple[int, str]:
 def _method_label(variant: str) -> str:
     labels = {
         "naive": "Naive",
-        "mask_only": "Mask only",
+        "mask": "Mask",
+        "edge": "Edge",
+        "occlusion": "Occlusion",
         "mask_edge": "Mask + edge",
+        "mask_occlusion": "Mask + occlusion",
+        "edge_occlusion": "Edge + occlusion",
         "full": "Full",
         "patch1_full": "Patch 1 full",
         "patch3_full": "Patch 3 full",

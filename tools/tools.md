@@ -60,7 +60,7 @@ Main workflow:
 ```bash
 python tools/results/run_ablation_suite.py \
   --bags /bags/forest_01.bag /bags/forest_02.bag \
-  --variants naive mask_only mask_edge full \
+  --variants naive mask edge occlusion mask_edge mask_occlusion edge_occlusion full \
   --study-name forest_ablation_2026 \
   --enable-overlays \
   --duration-sec 1200
