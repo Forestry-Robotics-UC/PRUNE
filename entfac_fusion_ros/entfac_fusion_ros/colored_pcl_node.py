@@ -108,7 +108,6 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -134,19 +133,11 @@ for parent in _THIS.parents:
         sys.path.insert(0, str(cand))
         break
 
-from entfac_fusion_core.types import SemanticPointCloud
 from entfac_fusion_core.utils.validation import require_homogeneous_transform
 
-from entfac_fusion_ros.conversions import image_to_numpy
-from entfac_fusion_ros.experiment_metrics import FrameMetrics, MetricsCsvLogger
-from entfac_fusion_ros.lidar_projector import (
-    LidarProjector,
-    LidarProjectorParams,
-    ProjectionMetrics,
-)
+from entfac_fusion_ros.lidar_projector import LidarProjector
 from entfac_fusion_ros.online_calibration import OnlineCalibration
 from entfac_fusion_ros.tracked_reprojection import TrackedReprojection
-from entfac_fusion_ros.debug_publisher import DebugPublisher, DebugPublisherParams
 from entfac_fusion_ros.colored_pcl_params import (
     coerce_bool as _coerce_bool,
     get_color_map as _get_color_map_helper,
@@ -172,8 +163,10 @@ from entfac_fusion_ros.colored_pcl.results import LastPcl
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
 from entfac_fusion_ros.colored_pcl.live_tuning import LiveTuningController
+from entfac_fusion_ros.colored_pcl.metrics_reporting import MetricsReporter
 from entfac_fusion_ros.colored_pcl.ros_io import ColoredPclRosIo
 from entfac_fusion_ros.colored_pcl.ply_service import PlyRecordingService
+from entfac_fusion_ros.colored_pcl import runtime_builders
 from entfac_fusion_ros.colored_pcl.diagnostics import DiagnosticsOrchestrator
 from entfac_fusion_ros.colored_pcl.depth_pipeline import DepthFusionPipeline
 from entfac_fusion_ros.colored_pcl.online_calibration_bridge import OnlineCalibrationBridge
@@ -828,19 +821,10 @@ class ColoredPclNode:
         self._ply_seq = 0
         self._last_pcl: Optional[LastPcl] = None
         self._results_frame_index = 0
-        self._metrics_logger: Optional[MetricsCsvLogger] = None
-        self._results_run_dir: Optional[Path] = None
-        if self.enable_metrics_csv:
-            bag_name = self.experiment_bag_name or "unknown_bag"
-            variant_name = self.experiment_variant_name or "default"
-            root = Path(self.results_dir or (Path(self.debug_output_dir).parent / "results"))
-            self._results_run_dir = root / bag_name / variant_name
-            self._results_run_dir.mkdir(parents=True, exist_ok=True)
-            if self.enable_metrics_csv:
-                self._metrics_logger = MetricsCsvLogger(
-                    self._results_run_dir / "metrics_per_frame.csv"
-                )
-                rospy.on_shutdown(self._close_metrics_logger)
+        self._metrics_logger = None
+        self._results_run_dir = None
+        self._metrics_reporter = MetricsReporter(self)
+        self._metrics_reporter.setup()
 
         self._ply_service.setup()
 
@@ -854,24 +838,13 @@ class ColoredPclNode:
         self._edge_buffer_shape: Optional[Tuple[int, int]] = None
 
         # Pure-numpy projection engine — no ROS dependency.
-        self._projector = LidarProjector(self._build_projector_params())
+        self._runtime_builders = runtime_builders
+        self._projector = LidarProjector(self._runtime_builders.build_projector_params(self))
 
         # Optional subsystems — None when disabled so hot path has zero branch cost.
         self._calibration: Optional[OnlineCalibration] = self._calibration_bridge.build(self._projector)
         self._tracked_repr: Optional[TrackedReprojection] = self._tracked_runtime.build()
-        self._debug_pub: Optional[DebugPublisher] = (
-            DebugPublisher(
-                self._build_debug_pub_params(),
-                node_name=self._node_name,
-                lidar_frame=self._lidar_frame,
-                target_frame=self.target_frame,
-            )
-            if any([
-                self.debug_project_lidar, self.debug_range_view,
-                self.debug_publish_fov_points, self.tracked_reprojection_enable,
-                self.online_calibration_enable,
-            ]) else None
-        )
+        self._debug_pub = self._runtime_builders.build_debug_publisher(self)
         self._diagnostics = DiagnosticsOrchestrator(self, self._debug_pub)
         self._depth_pipeline = DepthFusionPipeline(self)
         self._lidar_pipeline = LidarFusionPipeline(self)
@@ -943,46 +916,6 @@ class ColoredPclNode:
         self, txt_path: str
     ) -> Tuple[np.ndarray, str, Optional[np.ndarray], str, Tuple[int, int], str]:
         return _load_camera_info_txt_helper(self, txt_path)
-
-    def _build_projector_params(self) -> LidarProjectorParams:
-        return LidarProjectorParams(
-            max_depth_m=self.max_depth_m,
-            camera_fov_gate_enable=bool(self.camera_fov_gate_enable),
-            camera_fov_gate_margin_deg=float(self.camera_fov_gate_margin_deg),
-            rolling_shutter_enable=bool(self.rolling_shutter_enable),
-            rolling_shutter_direction=str(self.rolling_shutter_direction),
-            projection_patch_size=int(self.projection_patch_size),
-            projection_occlusion_epsilon_m=float(self.projection_occlusion_epsilon_m),
-            projection_occlusion_radius_px=int(self.projection_occlusion_radius_px),
-            projection_reject_depth_edges=bool(self.projection_reject_depth_edges),
-            projection_depth_edge_thresh=float(self.projection_depth_edge_thresh),
-            projection_depth_edge_radius_px=int(self.projection_depth_edge_radius_px),
-            projection_confidence_min=float(self.projection_confidence_min),
-            use_invalid_mask=bool(self.use_invalid_mask),
-            use_depth_edge_rejection=bool(self.use_depth_edge_rejection),
-            use_occlusion_gate=bool(self.use_occlusion_gate),
-            include_unlabeled=bool(self.include_unlabeled),
-            colorize_labels=bool(self.colorize_labels),
-            semantic_input_type=str(self.semantic_input_type),
-            color_map=dict(self.color_map) if self.color_map else {},
-            random_color_seed=int(self.random_color_seed),
-            num_labels=int(self.num_labels),
-            debug_project_lidar=bool(self.debug_project_lidar),
-        )
-
-    def _build_debug_pub_params(self) -> DebugPublisherParams:
-        return DebugPublisherParams(
-            debug_project_lidar=bool(self.debug_project_lidar),
-            debug_project_lidar_stride=int(self.debug_project_lidar_stride),
-            debug_project_lidar_radius=int(self.debug_project_lidar_radius),
-            debug_project_lidar_outline_only=bool(self.debug_project_lidar_outline_only),
-            debug_range_view=bool(self.debug_range_view),
-            debug_publish_fov_points=bool(self.debug_publish_fov_points),
-            tracked_reprojection_enable=bool(self.tracked_reprojection_enable),
-            online_calibration_enable=bool(self.online_calibration_enable),
-            debug_output_dir=str(self.debug_output_dir),
-            debug_output_stride=int(self.debug_output_stride),
-        )
 
     # ----------------------------
     # Startup report
@@ -1067,73 +1000,6 @@ class ColoredPclNode:
             semantic_debug_type,
             semantic_debug_img,
         )
-
-    def _write_lidar_metrics(
-        self,
-        *,
-        frame_index: int,
-        sem_msg,
-        lidar_msg,
-        pair_dt_sec: float,
-        pair_accepted: int,
-        drop_reason: str,
-        num_input_points: int,
-        projection_metrics: ProjectionMetrics,
-        num_output_points: int,
-        runtime_total_ms: float,
-        runtime_publish_ms: float,
-    ) -> None:
-        if self._metrics_logger is None:
-            return
-        projected = int(projection_metrics.num_points_projected_in_image)
-        known_rejected = (
-            int(projection_metrics.num_rejected_invalid_mask)
-            + int(projection_metrics.num_rejected_confidence)
-            + int(projection_metrics.num_rejected_depth_edge)
-            + int(projection_metrics.num_rejected_occlusion)
-        )
-        num_rejected_other = max(0, projected - int(num_output_points) - known_rejected)
-        output_retention_ratio = float(num_output_points) / max(projected, 1)
-        self._metrics_logger.write(
-            FrameMetrics(
-                bag_name=self.experiment_bag_name or "unknown_bag",
-                variant_name=self.experiment_variant_name or "default",
-                frame_index=int(frame_index),
-                stamp_semantic=float(sem_msg.header.stamp.to_sec()),
-                stamp_cloud=float(lidar_msg.header.stamp.to_sec()),
-                pair_dt_sec=float(pair_dt_sec),
-                pair_accepted=int(pair_accepted),
-                drop_reason=drop_reason,
-                num_input_points=int(num_input_points),
-                num_points_in_front=int(projection_metrics.num_points_in_front),
-                num_points_projected_in_image=projected,
-                num_rejected_invalid_mask=int(projection_metrics.num_rejected_invalid_mask),
-                num_rejected_confidence=int(projection_metrics.num_rejected_confidence),
-                num_rejected_depth_edge=int(projection_metrics.num_rejected_depth_edge),
-                num_rejected_occlusion=int(projection_metrics.num_rejected_occlusion),
-                num_rejected_other=num_rejected_other,
-                num_output_points=int(num_output_points),
-                output_retention_ratio=output_retention_ratio,
-                runtime_total_ms=float(runtime_total_ms),
-                runtime_projection_ms=float(projection_metrics.runtime_projection_ms),
-                runtime_mask_ms=float(projection_metrics.runtime_mask_ms),
-                runtime_rasterize_ms=float(projection_metrics.runtime_rasterize_ms),
-                runtime_depth_edge_ms=float(projection_metrics.runtime_depth_edge_ms),
-                runtime_occlusion_ms=float(projection_metrics.runtime_occlusion_ms),
-                runtime_publish_ms=float(runtime_publish_ms),
-                num_would_hit_invalid_mask=int(projection_metrics.num_would_hit_invalid_mask),
-                would_hit_invalid_mask_ratio=float(projection_metrics.num_would_hit_invalid_mask) / max(projected, 1),
-                num_would_hit_depth_edge=int(projection_metrics.num_would_hit_depth_edge),
-                would_hit_depth_edge_ratio=float(projection_metrics.num_would_hit_depth_edge) / max(projected, 1),
-                num_would_fail_occlusion=int(projection_metrics.num_would_fail_occlusion),
-                would_fail_occlusion_ratio=float(projection_metrics.num_would_fail_occlusion) / max(projected, 1),
-            )
-        )
-
-    def _close_metrics_logger(self) -> None:
-        if self._metrics_logger is not None:
-            self._metrics_logger.close()
-            self._metrics_logger = None
 
     def _metadata_callback(self, msg) -> None:
         try:

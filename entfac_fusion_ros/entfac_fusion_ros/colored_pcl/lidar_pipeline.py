@@ -480,7 +480,7 @@ class LidarFusionPipeline:
 
         result = self._node._stamp_policy.validate_lidar_pair(sem_msg, lidar_msg)
         if result is None:
-            self._node._write_lidar_metrics(
+            self._node._metrics_reporter.write_lidar_metrics(
                 frame_index=frame_index,
                 sem_msg=sem_msg,
                 lidar_msg=lidar_msg,
@@ -498,7 +498,7 @@ class LidarFusionPipeline:
 
         transforms = self._lookup_transforms(lidar_msg.header.frame_id)
         if transforms is None:
-            self._node._write_lidar_metrics(
+            self._node._metrics_reporter.write_lidar_metrics(
                 frame_index=frame_index,
                 sem_msg=sem_msg,
                 lidar_msg=lidar_msg,
@@ -567,7 +567,7 @@ class LidarFusionPipeline:
         )
         runtime_publish_ms = 1000.0 * (time.perf_counter() - publish_t0)
         lidar_result.projection_metrics.runtime_publish_ms = runtime_publish_ms
-        self._node._write_lidar_metrics(
+        self._node._metrics_reporter.write_lidar_metrics(
             frame_index=frame_index,
             sem_msg=sem_msg,
             lidar_msg=lidar_msg,

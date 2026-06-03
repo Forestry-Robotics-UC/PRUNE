@@ -78,9 +78,9 @@ class LiveTuningController:
             )
 
         if changes:
-            self._node._projector.update_params(self._node._build_projector_params())
+            self._node._projector.update_params(self._node._runtime_builders.build_projector_params())
             if self._node._debug_pub is not None:
-                self._node._debug_pub.update_params(self._node._build_debug_pub_params())
+                self._node._debug_pub.update_params(self._node._runtime_builders.build_debug_pub_params())
             if log_source:
                 self._log.info(log_source, "Live tuning update: %s", ", ".join(changes))
         return bool(changes)
