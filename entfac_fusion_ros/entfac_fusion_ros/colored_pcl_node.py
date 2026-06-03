@@ -143,10 +143,7 @@ from entfac_fusion_core.colored_pcl import (
     fuse_depth_semantics,
     fuse_lidar_semantics,
 )
-from entfac_fusion_core.calibration import (
-    CalibrationHealthSnapshot,
-    OnlineCalibrationHealth,
-)
+from entfac_fusion_core.calibration import CalibrationHealthSnapshot
 from entfac_fusion_core.projection.depth import depth_to_points
 from entfac_fusion_core.projection.lidar_projection import project_points_to_image
 from entfac_fusion_core.transforms.se3 import transform_points
@@ -181,8 +178,8 @@ from entfac_fusion_ros.lidar_projector import (
     ProjectionMetrics,
     ProjectionResult,
 )
-from entfac_fusion_ros.online_calibration import OnlineCalibration, OnlineCalibrationParams
-from entfac_fusion_ros.tracked_reprojection import TrackedReprojection, TrackedReprojectionParams
+from entfac_fusion_ros.online_calibration import OnlineCalibration
+from entfac_fusion_ros.tracked_reprojection import TrackedReprojection
 from entfac_fusion_ros.debug_publisher import DebugPublisher, DebugPublisherParams
 from entfac_fusion_ros.colored_pcl_params import (
     coerce_bool as _coerce_bool,
@@ -209,9 +206,14 @@ from entfac_fusion_ros.colored_pcl.results import LastPcl
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.ros_io import ColoredPclRosIo
 from entfac_fusion_ros.colored_pcl.ply_service import PlyRecordingService
+from entfac_fusion_ros.colored_pcl.diagnostics import DiagnosticsOrchestrator
+from entfac_fusion_ros.colored_pcl.depth_pipeline import DepthFusionPipeline
+from entfac_fusion_ros.colored_pcl.online_calibration_bridge import OnlineCalibrationBridge
 from entfac_fusion_ros.colored_pcl.semantic_inputs import SemanticInputParser
 from entfac_fusion_ros.colored_pcl.sync_policy import StampPolicy
 from entfac_fusion_ros.colored_pcl.tf_resolver import TransformResolver
+from entfac_fusion_ros.colored_pcl.lidar_pipeline import LidarFusionPipeline
+from entfac_fusion_ros.colored_pcl.tracked_reprojection_runtime import TrackedReprojectionRuntime
 from entfac_fusion_ros.colored_pcl_startup import (
     log_correction_statuses as _log_correction_statuses_helper,
     log_param_report as _log_param_report_helper,
@@ -220,13 +222,11 @@ from entfac_fusion_ros.colored_pcl_startup import (
 )
 from entfac_fusion_ros.logging_ros import NodeLogger, configure_core_logging
 from entfac_fusion_ros.pc2 import (
-    build_label_rgb_float_lut,
     labels_to_uint16,
     semantic_pointcloud_to_msg,
 )
-from entfac_fusion_ros.ply import PlyJob, PlyWriterThread
-from entfac_fusion_ros.status import StatusReporter, render_status_table
-from entfac_fusion_ros.tf_utils import format_matrix, transform_stamped_to_matrix
+from entfac_fusion_ros.status import StatusReporter
+from entfac_fusion_ros.tf_utils import format_matrix
 from entfac_fusion_ros.imu_cache import interpolate_imu_msg
 
 try:
@@ -768,19 +768,7 @@ class ColoredPclNode:
         self._mode_detail = "forced via ~mode" if self._mode_source == "forced" else ""
         if self.mode not in ("depth", "lidar"):
             self.mode = self._detect_mode()
-        self._online_calibration_health = OnlineCalibrationHealth(
-            ema_alpha=float(self.online_calibration_health_ema_alpha),
-            std_window=int(self.online_calibration_health_std_window),
-            std_scale=float(self.online_calibration_health_std_scale),
-            score_center=float(self.online_calibration_health_score_center),
-            score_scale=float(self.online_calibration_health_score_scale),
-            min_observability=float(self.online_calibration_min_observability),
-        )
         self._online_calibration_rpy_rad = np.zeros(3, dtype=np.float64)
-        self._online_calibration_correction_uncertainty = 1.0
-        self._online_calibration_update_counter = 0
-        self._online_calibration_last_snapshot: Optional[CalibrationHealthSnapshot] = None
-        self._online_calibration_last_log_at = 0.0
         if self.online_calibration_enable and self.mode != "lidar":
             self._log.warn(
                 "__init__",
@@ -810,6 +798,8 @@ class ColoredPclNode:
         self._camera_model = CameraModel(self, self._log)
         self._camera_model.load()
         self._ply_service = PlyRecordingService(self, self._log)
+        self._tracked_runtime = TrackedReprojectionRuntime(self)
+        self._calibration_bridge = OnlineCalibrationBridge(self)
         self._semantic_parser = SemanticInputParser(
             self,
             ColorConfig(
@@ -848,9 +838,6 @@ class ColoredPclNode:
         self._lidar_imu_cache = None
         self._lidar_imu_sub = None
         self._lidar_imu_to_lidar_R = None
-        self._tracked_reprojection_prev_gray = None
-        self._tracked_reprojection_prev_pts = None
-        self._tracked_reprojection_last_log_at = 0.0
         self._debug_callback_seq = 0
         self._rolling_shutter_log_at = 0.0
         self._rolling_shutter_warn_at = 0.0
@@ -920,14 +907,8 @@ class ColoredPclNode:
         self._projector = LidarProjector(self._build_projector_params())
 
         # Optional subsystems — None when disabled so hot path has zero branch cost.
-        self._calibration: Optional[OnlineCalibration] = (
-            OnlineCalibration(self._build_calibration_params(), self._projector)
-            if self.online_calibration_enable else None
-        )
-        self._tracked_repr: Optional[TrackedReprojection] = (
-            TrackedReprojection(self._build_tracked_repr_params(), self._ensure_cv2)
-            if self.tracked_reprojection_enable else None
-        )
+        self._calibration: Optional[OnlineCalibration] = self._calibration_bridge.build(self._projector)
+        self._tracked_repr: Optional[TrackedReprojection] = self._tracked_runtime.build()
         self._debug_pub: Optional[DebugPublisher] = (
             DebugPublisher(
                 self._build_debug_pub_params(),
@@ -941,6 +922,9 @@ class ColoredPclNode:
                 self.online_calibration_enable,
             ]) else None
         )
+        self._diagnostics = DiagnosticsOrchestrator(self, self._debug_pub)
+        self._depth_pipeline = DepthFusionPipeline(self)
+        self._lidar_pipeline = LidarFusionPipeline(self)
 
         self._ros_io = ColoredPclRosIo(self)
         self._ros_io.setup_publishers()
@@ -1028,38 +1012,6 @@ class ColoredPclNode:
             random_color_seed=int(self.random_color_seed),
             num_labels=int(self.num_labels),
             debug_project_lidar=bool(self.debug_project_lidar),
-        )
-
-    def _build_calibration_params(self) -> OnlineCalibrationParams:
-        return OnlineCalibrationParams(
-            every_n_frames=int(self.online_calibration_every_n_frames),
-            max_points=int(self.online_calibration_max_points),
-            step_deg=float(self.online_calibration_step_deg),
-            learning_rate=float(self.online_calibration_learning_rate),
-            max_correction_deg=float(self.online_calibration_max_correction_deg),
-            min_observability=float(self.online_calibration_min_observability),
-            min_fov_points=int(self.online_calibration_min_fov_points),
-            edge_threshold=float(self.online_calibration_edge_threshold),
-            min_sem_edge_density=float(self.online_calibration_min_sem_edge_density),
-            min_depth_edge_density=float(self.online_calibration_min_depth_edge_density),
-            log_period_sec=float(self.online_calibration_log_period_sec),
-            health_ema_alpha=float(self.online_calibration_health_ema_alpha),
-            health_std_window=int(self.online_calibration_health_std_window),
-            health_std_scale=float(self.online_calibration_health_std_scale),
-            health_score_center=float(self.online_calibration_health_score_center),
-            health_score_scale=float(self.online_calibration_health_score_scale),
-        )
-
-    def _build_tracked_repr_params(self) -> TrackedReprojectionParams:
-        return TrackedReprojectionParams(
-            max_corners=int(self.tracked_reprojection_max_corners),
-            quality_level=float(self.tracked_reprojection_quality_level),
-            min_distance_px=float(self.tracked_reprojection_min_distance_px),
-            min_tracks=int(self.tracked_reprojection_min_tracks),
-            fb_thresh_px=float(self.tracked_reprojection_fb_thresh_px),
-            depth_edge_thresh=float(self.tracked_reprojection_depth_edge_thresh),
-            min_image_edge=float(self.tracked_reprojection_min_image_edge),
-            log_period_sec=float(self.tracked_reprojection_log_period_sec),
         )
 
     def _build_debug_pub_params(self) -> DebugPublisherParams:
@@ -1554,8 +1506,7 @@ class ColoredPclNode:
         """Assemble cloud, publish, save PLY, and emit status."""
         h, w = image_shape
 
-        if self._debug_pub is not None:
-            self._debug_pub.tick()
+        self._diagnostics.tick()
 
         if (
             self._debug_pub is not None
@@ -1567,7 +1518,7 @@ class ColoredPclNode:
                 points, intrinsics, corrected_camera_T_lidar, (h, w)
             )
             _emap = edge_map if edge_map is not None else self._projector._depth_to_edge_map(_dmap)
-            self._debug_pub.publish_range_view(
+            self._diagnostics.publish_range_view(
                 depth_map=_dmap,
                 edge_map=_emap,
                 sem_img=semantic_debug_img,
@@ -1583,14 +1534,14 @@ class ColoredPclNode:
                 points, intrinsics, corrected_camera_T_lidar, (h, w)
             )
             _emap = edge_map if edge_map is not None else self._projector._depth_to_edge_map(_dmap)
-            _tr_result = self._tracked_repr.update(
+            _tr_result = self._tracked_runtime.update(
                 sem_img=semantic_debug_img,
                 sem_type=semantic_debug_type,
                 depth_map=_dmap,
                 depth_edges=_emap,
             )
-            if _tr_result is not None and self._debug_pub is not None:
-                self._debug_pub.publish_tracked_reprojection(
+            if _tr_result is not None:
+                self._diagnostics.publish_tracked_reprojection(
                     _tr_result.overlay_img, _tr_result.error_px, sem_msg.header
                 )
 
@@ -1677,7 +1628,7 @@ class ColoredPclNode:
         corrected_camera_T_lidar = camera_T_lidar
         if self._calibration is not None and semantic_debug_img is not None:
             sem_h, sem_w = semantic_debug_img.shape[:2]
-            corrected_camera_T_lidar, _calib_snapshot = self._calibration.update(
+            corrected_camera_T_lidar, _calib_snapshot = self._calibration_bridge.update(
                 points=points,
                 sem_img=semantic_debug_img,
                 sem_type=semantic_debug_type,
@@ -1685,9 +1636,9 @@ class ColoredPclNode:
                 camera_T_lidar=camera_T_lidar,
                 image_shape=(int(sem_h), int(sem_w)),
             )
-            if _calib_snapshot is not None and self._debug_pub is not None:
-                self._debug_pub.publish_calibration_health(_calib_snapshot)
-            self._online_calibration_status = self._calibration._status
+            if _calib_snapshot is not None:
+                self._diagnostics.publish_calibration_health(_calib_snapshot)
+            self._online_calibration_status = self._calibration_bridge.status
 
         # PHASE 5: Projection & Sampling (delegated to LidarProjector)
         rolling_shutter_readout_sec = (
@@ -1739,14 +1690,12 @@ class ColoredPclNode:
                     points, intrinsics, corrected_camera_T_lidar,
                     (image_shape[1], image_shape[0])
                 )
-                self._debug_pub.publish_lidar_projection(
+                self._diagnostics.publish_lidar_projection(
                     _base_rgb, image_shape, _uv, sem_msg.header,
                     colors_u8=debug_colors,
                 )
             if self.debug_publish_fov_points and points.shape[0]:
-                self._debug_pub.publish_fov_points(
-                    points, lidar_msg.header.frame_id, lidar_msg.header.stamp
-                )
+                self._diagnostics.publish_fov_points(points, lidar_msg.header.frame_id, lidar_msg.header.stamp)
 
         return _LidarFrameResult(
             pcl=pcl,
@@ -2210,21 +2159,7 @@ class ColoredPclNode:
     # ----------------------------
 
     def _maybe_emit_status(self, *, points: int, callback_sec: float) -> None:
-        snap = self._status.record(points=int(points), callback_sec=float(callback_sec))
-        if snap is None:
-            return
-        table = render_status_table(
-            node_name=self._node_name,
-            mode=self.mode,
-            semantic_input_type=self.semantic_input_type,
-            target_frame=self.target_frame,
-            output_topic=self._output_topic,
-            points_last=snap.points_last,
-            pub_hz=snap.pub_hz,
-            avg_points=snap.avg_points,
-            avg_callback_ms=snap.avg_callback_ms,
-        )
-        self._log.debug("status", "\n%s", table)
+        self._diagnostics.emit_status(points=int(points), callback_sec=float(callback_sec))
 
     def _render_startup_table(self) -> str:
         return _render_startup_table_helper(
@@ -2369,235 +2304,12 @@ class ColoredPclNode:
         self._maybe_emit_status(points=int(pcl.points_xyz.shape[0]), callback_sec=dt)
 
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None, invalid_mask_msg=None):
-        t0 = time.perf_counter()
         with self._maybe_profile("depth_callback"):
-            self._maybe_refresh_live_tuning_params()
-
-            # PHASE 1: Validate inputs and timestamps
-            result = self._stamp_policy.validate_depth_pair(sem_msg, depth_msg)
-            if result is None:
-                return
-            chosen_stamp, stamp = result
-
-            # PHASE 2: Lookup transforms
-            self._current_depth_frame = depth_msg.header.frame_id
-            target_T_depth = self._depth_lookup_transforms()
-            if target_T_depth is None:
-                return
-
-            # PHASE 3: Parse semantic inputs and prepare depth
-            (
-                labels,
-                packed_img,
-                confidence,
-                projection_invalid_mask,
-                rgb_lut,
-                include_rgb,
-                intrinsics,
-                _semantic_shape,
-                _semantic_debug_type,
-                semantic_debug_img,
-            ) = self._prepare_frame_inputs(
-                sem_msg, conf_msg, invalid_mask_msg, "_depth_callback"
-            )
-
-            depth_raw = image_to_numpy(depth_msg)
-            depth_enc = depth_msg.encoding.lower()
-            invalid_raw = None
-            if self.filter_invalid_depth and depth_enc in ("16uc1", "mono16", "16sc1"):
-                invalid_raw = (depth_raw == 0) | (
-                    depth_raw == np.iinfo(np.uint16).max
-                )
-            if self.downsample_factor > 1:
-                f = self.downsample_factor
-                depth_raw = depth_raw[::f, ::f]
-                if invalid_raw is not None:
-                    invalid_raw = invalid_raw[::f, ::f]
-
-            # PHASE 4: Process depth (scaling and validation)
-            scale = float(self.depth_scale)
-            if scale == 0.0:
-                if depth_enc in ("16uc1", "16sc1", "mono16"):
-                    scale = 0.001
-                else:
-                    scale = 1.0
-            if self.debug and not self._logged_depth_scaling:
-                self._log.info(
-                    "_depth_callback",
-                    "Depth scaling: encoding=%s scale=%.6f (depth_scale_param=%.6f)",
-                    depth_msg.encoding,
-                    float(scale),
-                    float(self.depth_scale),
-                )
-                self._logged_depth_scaling = True
-
-            depth = depth_raw.astype(np.float32, copy=False) * float(scale)
-            if invalid_raw is not None:
-                depth[invalid_raw] = 0.0
-            if confidence is not None:
-                confidence = confidence.astype(np.float32, copy=False)
-
-            if self.debug and not self._logged_depth_summary:
-                valid = np.isfinite(depth) & (depth > 0)
-                valid_count = int(np.count_nonzero(valid))
-                if valid_count:
-                    dmin = float(depth[valid].min())
-                    dmax = float(depth[valid].max())
-                else:
-                    dmin, dmax = float("nan"), float("nan")
-                self._log.info(
-                    "_depth_callback",
-                    "Depth inputs: semantic_shape=%s depth_shape=%s depth_encoding=%s valid_depth=%d min=%.3f max=%.3f downsample=%d",
-                    semantic_debug_img.shape[:2],
-                    depth.shape,
-                    depth_msg.encoding,
-                    valid_count,
-                    dmin,
-                    dmax,
-                    int(self.downsample_factor),
-                )
-                self._logged_depth_summary = True
-
-            # PHASE 5: Unproject to 3D and fuse with semantics
-            pcl, rgb_values = self._depth_unproject_and_fuse(
-                depth=depth,
-                labels=labels,
-                packed_img=packed_img,
-                confidence=confidence,
-                projection_invalid_mask=projection_invalid_mask,
-                intrinsics=intrinsics,
-                target_T_depth=target_T_depth,
-                rgb_lut=rgb_lut,
-                include_rgb=include_rgb,
-            )
-
-            # PHASE 6: Output assembly & publishing
-            self._depth_assemble_and_publish(
-                pcl=pcl,
-                include_rgb=include_rgb,
-                rgb_values=rgb_values,
-                rgb_lut=rgb_lut,
-                stamp=stamp,
-                dt=time.perf_counter() - t0,
-            )
+            self._depth_pipeline.process(sem_msg, depth_msg, conf_msg, invalid_mask_msg)
 
     def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None, invalid_mask_msg=None):
-        t0 = time.perf_counter()
-        frame_index = int(self._results_frame_index)
-        self._results_frame_index += 1
-        pair_dt_sec = self._stamp_policy.compute_pair_dt_sec(sem_msg, lidar_msg)
         with self._maybe_profile("lidar_callback"):
-            self._maybe_refresh_live_tuning_params()
-
-            # PHASE 1: Validate inputs and timestamps
-            result = self._stamp_policy.validate_lidar_pair(sem_msg, lidar_msg)
-            if result is None:
-                self._write_lidar_metrics(
-                    frame_index=frame_index,
-                    sem_msg=sem_msg,
-                    lidar_msg=lidar_msg,
-                    pair_dt_sec=pair_dt_sec,
-                    pair_accepted=0,
-                    drop_reason="pair_dt_too_large",
-                    num_input_points=0,
-                    projection_metrics=ProjectionMetrics(),
-                    num_output_points=0,
-                    runtime_total_ms=1000.0 * (time.perf_counter() - t0),
-                    runtime_publish_ms=0.0,
-                )
-                return
-            chosen_stamp, stamp = result
-
-            # PHASE 2: Lookup transforms
-            transforms = self._lidar_lookup_transforms(lidar_msg.header.frame_id)
-            if transforms is None:
-                self._write_lidar_metrics(
-                    frame_index=frame_index,
-                    sem_msg=sem_msg,
-                    lidar_msg=lidar_msg,
-                    pair_dt_sec=pair_dt_sec,
-                    pair_accepted=0,
-                    drop_reason="missing_tf",
-                    num_input_points=0,
-                    projection_metrics=ProjectionMetrics(),
-                    num_output_points=0,
-                    runtime_total_ms=1000.0 * (time.perf_counter() - t0),
-                    runtime_publish_ms=0.0,
-                )
-                return
-            camera_T_lidar, target_T_lidar = transforms
-
-            # PHASE 3: Parse semantic inputs and prepare intrinsics
-            (
-                labels,
-                packed_img,
-                confidence,
-                projection_invalid_mask,
-                rgb_lut,
-                include_rgb,
-                intrinsics,
-                semantic_shape,
-                semantic_debug_type,
-                semantic_debug_img,
-            ) = self._prepare_frame_inputs(
-                sem_msg, conf_msg, invalid_mask_msg, "_lidar_callback"
-            )
-
-            # PHASE 4/5: Parse LiDAR, optionally deskew, calibrate, and project
-            lidar_result = self._lidar_process_frame(
-                sem_msg=sem_msg,
-                lidar_msg=lidar_msg,
-                labels=labels,
-                packed_img=packed_img,
-                confidence=confidence,
-                projection_invalid_mask=projection_invalid_mask,
-                rgb_lut=rgb_lut,
-                include_rgb=include_rgb,
-                intrinsics=intrinsics,
-                semantic_shape=semantic_shape,
-                semantic_debug_type=semantic_debug_type,
-                semantic_debug_img=semantic_debug_img,
-                camera_T_lidar=camera_T_lidar,
-                target_T_lidar=target_T_lidar,
-            )
-
-            # PHASE 6: Output assembly & publishing
-            _publish_t0 = time.perf_counter()
-            self._lidar_assemble_and_publish(
-                pcl=lidar_result.pcl,
-                debug_colors=lidar_result.debug_colors,
-                image_shape=lidar_result.image_shape,
-                points=lidar_result.points,
-                semantic_debug_img=semantic_debug_img,
-                semantic_debug_type=semantic_debug_type,
-                intrinsics=intrinsics,
-                corrected_camera_T_lidar=lidar_result.corrected_camera_T_lidar,
-                include_rgb=include_rgb,
-                rgb_values=lidar_result.rgb_values,
-                rgb_lut=rgb_lut,
-                stamp=stamp,
-                sem_msg=sem_msg,
-                dt=time.perf_counter() - t0,
-                depth_map=lidar_result.depth_map,
-                edge_map=lidar_result.edge_map,
-            )
-            runtime_publish_ms = 1000.0 * (time.perf_counter() - _publish_t0)
-            lidar_result.projection_metrics.runtime_publish_ms = runtime_publish_ms
-            self._write_lidar_metrics(
-                frame_index=frame_index,
-                sem_msg=sem_msg,
-                lidar_msg=lidar_msg,
-                pair_dt_sec=pair_dt_sec,
-                pair_accepted=1,
-                drop_reason="none",
-                num_input_points=lidar_result.num_input_points,
-                projection_metrics=lidar_result.projection_metrics,
-                num_output_points=int(lidar_result.pcl.points_xyz.shape[0]),
-                runtime_total_ms=1000.0 * (time.perf_counter() - t0),
-                runtime_publish_ms=runtime_publish_ms,
-            )
-
-        self._debug_callback_seq += 1
+            self._lidar_pipeline.process(sem_msg, lidar_msg, conf_msg, invalid_mask_msg)
 
 
 def main():
