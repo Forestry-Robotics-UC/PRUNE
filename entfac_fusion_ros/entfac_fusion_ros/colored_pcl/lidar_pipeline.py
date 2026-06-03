@@ -469,7 +469,10 @@ class LidarFusionPipeline:
         if self._node._ply_recording:
             self._node._ply_service.enqueue(self._node._last_pcl)
 
-        self._node._maybe_emit_status(points=int(pcl.points_xyz.shape[0]), callback_sec=dt)
+        self._node._startup_reporting.emit_status(
+            points=int(pcl.points_xyz.shape[0]),
+            callback_sec=dt,
+        )
 
     def process(self, sem_msg, lidar_msg, conf_msg=None, invalid_mask_msg=None):
         t0 = time.perf_counter()
@@ -525,7 +528,7 @@ class LidarFusionPipeline:
             semantic_shape,
             semantic_debug_type,
             semantic_debug_img,
-        ) = self._node._prepare_frame_inputs(
+        ) = self._node._frame_inputs.prepare(
             sem_msg, conf_msg, invalid_mask_msg, "_lidar_callback"
         )
 

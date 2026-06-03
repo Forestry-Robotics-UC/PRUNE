@@ -145,11 +145,13 @@ from entfac_fusion_ros.colored_pcl_params import (
 )
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
+from entfac_fusion_ros.colored_pcl.frame_inputs import FrameInputPreparer
 from entfac_fusion_ros.colored_pcl.initializer import NodeInitializer
 from entfac_fusion_ros.colored_pcl.ply_service import PlyRecordingService
 from entfac_fusion_ros.colored_pcl.runtime_setup import RuntimeSetup
 from entfac_fusion_ros.colored_pcl.online_calibration_bridge import OnlineCalibrationBridge
 from entfac_fusion_ros.colored_pcl.semantic_inputs import SemanticInputParser
+from entfac_fusion_ros.colored_pcl.startup_reporting import StartupReporter
 from entfac_fusion_ros.colored_pcl.sync_policy import StampPolicy
 from entfac_fusion_ros.colored_pcl.tf_resolver import TransformResolver
 from entfac_fusion_ros.colored_pcl.tracked_reprojection_runtime import TrackedReprojectionRuntime
@@ -555,6 +557,7 @@ class ColoredPclNode:
         self.tf_listener = self._tf_resolver.tf_listener
         self._bootstrap = StartupBootstrap(self, self._log)
         self._runtime_setup = RuntimeSetup(self)
+        self._startup_reporting = StartupReporter(self)
 
         self._initializer.load_camera_info()
 
@@ -625,6 +628,7 @@ class ColoredPclNode:
             ),
             self._log,
         )
+        self._frame_inputs = FrameInputPreparer(self)
         self._runtime_setup.initialize_runtime_state()
 
         self._runtime_setup.validate_mode_dependent_flags()
@@ -636,9 +640,9 @@ class ColoredPclNode:
             DynamicReconfigureServer,
             ColoredPclTuningConfig,
         )
-        self._log.info("__init__", "\n%s", self._render_startup_table())
-        self._log_correction_statuses()
-        self._log_startup_transforms()
+        self._log.info("__init__", "\n%s", self._startup_reporting.render_startup_table())
+        self._startup_reporting.log_correction_statuses()
+        self._startup_reporting.log_startup_transforms()
         self._log.debug(
             "__init__",
             "Runtime: target_frame=%s camera_frame=%s semantic_input_type=%s colorize_labels=%s include_unlabeled=%s downsample=%d",
@@ -650,7 +654,7 @@ class ColoredPclNode:
             int(self.downsample_factor),
         )
         if self.debug:
-            self._log_param_report()
+            self._startup_reporting.log_param_report()
 
     # ----------------------------
     # Param helpers (with meta)
@@ -692,90 +696,6 @@ class ColoredPclNode:
         self, txt_path: str
     ) -> Tuple[np.ndarray, str, Optional[np.ndarray], str, Tuple[int, int], str]:
         return _load_camera_info_txt_helper(self, txt_path)
-
-    # ----------------------------
-    # Startup report
-    # ----------------------------
-
-    def _log_startup_transforms(self):
-        _log_startup_transforms_helper(self)
-
-    def _log_param_report(self):
-        _log_param_report_helper(self)
-
-    def _log_correction_statuses(self) -> None:
-        _log_correction_statuses_helper(self)
-
-    def _parse_semantic_inputs(
-        self, sem_msg, conf_msg, invalid_mask_msg, callback_name: str
-    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
-        parsed = self._semantic_parser.parse(sem_msg, conf_msg, invalid_mask_msg, callback_name)
-        return (
-            parsed.labels,
-            parsed.packed_rgb,
-            parsed.confidence,
-            parsed.projection_invalid_mask,
-        )
-
-    def _prepare_frame_inputs(
-        self,
-        sem_msg,
-        conf_msg,
-        invalid_mask_msg,
-        callback_name: str,
-    ) -> Tuple[
-        Optional[np.ndarray],
-        Optional[np.ndarray],
-        Optional[np.ndarray],
-        Optional[np.ndarray],
-        Optional[np.ndarray],
-        bool,
-        np.ndarray,
-        Tuple[int, int],
-        str,
-        np.ndarray,
-    ]:
-        include_rgb = bool(self.colorize_labels) if self.semantic_input_type == "labels" else True
-        labels, packed_img, confidence, projection_invalid_mask, rgb_lut = self._parse_semantic_inputs(
-            sem_msg, conf_msg, invalid_mask_msg, callback_name
-        )
-        semantic_debug_type = "labels" if labels is not None else "rgb"
-        semantic_debug_img = labels if labels is not None else packed_img
-        if semantic_debug_img is None:
-            raise ValueError("semantic input could not be prepared")
-
-        if self.downsample_factor > 1:
-            f = self.downsample_factor
-            if labels is not None:
-                labels = labels[::f, ::f]
-            else:
-                packed_img = packed_img[::f, ::f]
-            if confidence is not None:
-                confidence = confidence[::f, ::f]
-            if projection_invalid_mask is not None:
-                projection_invalid_mask = projection_invalid_mask[::f, ::f]
-            intrinsics = self._scale_intrinsics(self.intrinsics, f)
-        else:
-            intrinsics = self.intrinsics
-
-        semantic_shape = (
-            labels.shape if labels is not None else packed_img.shape[:2]
-        )
-        semantic_debug_img = labels if labels is not None else packed_img
-        if semantic_debug_img is None:
-            raise ValueError("semantic input could not be prepared")
-        return (
-            labels,
-            packed_img,
-            confidence,
-            projection_invalid_mask,
-            rgb_lut,
-            include_rgb,
-            intrinsics,
-            semantic_shape,
-            semantic_debug_type,
-            semantic_debug_img,
-        )
 
     def _metadata_callback(self, msg) -> None:
         try:
@@ -836,39 +756,6 @@ class ColoredPclNode:
             ps = pstats.Stats(prof, stream=s).sort_stats("tottime")
             ps.print_stats(10)
             self._log.info("_profile", "%s profile:\n%s", label, s.getvalue())
-
-    # ----------------------------
-    # Semantic parsing and coloring
-    # ----------------------------
-
-
-
-
-
-
-
-
-    def _get_rgb_float_lut(self, labels_img: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Delegate to LidarProjector (owns the LUT cache and warned-flag)."""
-        return self._projector._get_rgb_float_lut(labels_img)
-
-    # ----------------------------
-    # PLY services
-    # ----------------------------
-
-    # ----------------------------
-    # Callbacks
-    # ----------------------------
-
-    def _maybe_emit_status(self, *, points: int, callback_sec: float) -> None:
-        self._diagnostics.emit_status(points=int(points), callback_sec=float(callback_sec))
-
-    def _render_startup_table(self) -> str:
-        return _render_startup_table_helper(
-            self,
-            rospy.resolve_name("~save_ply"),
-            rospy.resolve_name("~set_ply_recording"),
-        )
 
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None, invalid_mask_msg=None):
         with self._maybe_profile("depth_callback"):
