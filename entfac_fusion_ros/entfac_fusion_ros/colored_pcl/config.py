@@ -55,6 +55,47 @@ class DebugConfig:
 
 
 @dataclass
+class ExperimentConfig:
+    use_invalid_mask: bool
+    use_depth_edge_rejection: bool
+    use_occlusion_gate: bool
+    experiment_variant_name: str
+    experiment_bag_name: str
+    results_dir: str
+    enable_metrics_csv: bool
+
+
+@dataclass
+class CalibrationConfig:
+    tracked_reprojection_enable: bool
+    tracked_reprojection_max_corners: int
+    tracked_reprojection_quality_level: float
+    tracked_reprojection_min_distance_px: float
+    tracked_reprojection_min_tracks: int
+    tracked_reprojection_fb_thresh_px: float
+    tracked_reprojection_depth_edge_thresh: float
+    tracked_reprojection_min_image_edge: float
+    tracked_reprojection_log_period_sec: float
+    online_calibration_enable: bool
+    online_calibration_every_n_frames: int
+    online_calibration_max_points: int
+    online_calibration_edge_threshold: float
+    online_calibration_step_deg: float
+    online_calibration_learning_rate: float
+    online_calibration_max_correction_deg: float
+    online_calibration_min_observability: float
+    online_calibration_min_fov_points: int
+    online_calibration_min_sem_edge_density: float
+    online_calibration_min_depth_edge_density: float
+    online_calibration_health_ema_alpha: float
+    online_calibration_health_std_window: int
+    online_calibration_health_std_scale: float
+    online_calibration_health_score_center: float
+    online_calibration_health_score_scale: float
+    online_calibration_log_period_sec: float
+
+
+@dataclass
 class PlyConfig:
     ply_output_dir: str
     ply_recording_enable: bool
@@ -288,6 +329,275 @@ def load_debug_config(node: Any) -> DebugConfig:
             False,
             "If true (lidar mode), publish only the LiDAR points that passed the camera FOV test as a debug PointCloud2 in the LiDAR frame.",
         ),
+    )
+
+
+def load_experiment_config(node: Any) -> ExperimentConfig:
+    return ExperimentConfig(
+        use_invalid_mask=node._get_param_bool(
+            "~use_invalid_mask",
+            True,
+            "Experiment switch: if false, invalid-mask samples are counted but not rejected.",
+        ),
+        use_depth_edge_rejection=node._get_param_bool(
+            "~use_depth_edge_rejection",
+            True,
+            "Experiment switch: if false, depth-edge samples are counted but not rejected.",
+        ),
+        use_occlusion_gate=node._get_param_bool(
+            "~use_occlusion_gate",
+            True,
+            "Experiment switch: if false, occlusion-risk samples are counted but not rejected.",
+        ),
+        experiment_variant_name=node._get_param_str(
+            "~experiment_variant_name",
+            "",
+            "Experiment variant name written to metrics_per_frame.csv.",
+            allow_empty=True,
+        ),
+        experiment_bag_name=node._get_param_str(
+            "~bag_name",
+            "",
+            "Bag/run name written to metrics_per_frame.csv.",
+            allow_empty=True,
+        ),
+        results_dir=node._get_param_str(
+            "~results_dir",
+            "",
+            "Root directory for experiment metrics and overlay outputs.",
+            allow_empty=True,
+        ),
+        enable_metrics_csv=node._get_param_bool(
+            "~enable_metrics_csv",
+            False,
+            "Write per-frame experiment metrics to results/<bag>/<variant>/metrics_per_frame.csv.",
+        ),
+    )
+
+
+def load_calibration_config(node: Any) -> CalibrationConfig:
+    tracked_reprojection_quality_level = _get_float(
+        node,
+        "~tracked_reprojection_quality_level",
+        0.01,
+        "Shi-Tomasi quality level for tracked reprojection feature detection.",
+        min_value=0.0,
+        max_value=1.0,
+    )
+    if tracked_reprojection_quality_level <= 0.0:
+        raise ValueError("~tracked_reprojection_quality_level must be in (0, 1]")
+    tracked_reprojection_min_distance_px = _get_float(
+        node,
+        "~tracked_reprojection_min_distance_px",
+        8.0,
+        "Minimum pixel spacing between tracked reprojection features.",
+        min_value=0.0,
+    )
+    if tracked_reprojection_min_distance_px <= 0.0:
+        raise ValueError("~tracked_reprojection_min_distance_px must be > 0")
+    tracked_reprojection_fb_thresh_px = _get_float(
+        node,
+        "~tracked_reprojection_fb_thresh_px",
+        1.5,
+        "Forward-backward optical-flow consistency threshold in pixels.",
+        min_value=0.0,
+    )
+    if tracked_reprojection_fb_thresh_px <= 0.0:
+        raise ValueError("~tracked_reprojection_fb_thresh_px must be > 0")
+    tracked_reprojection_min_image_edge = _get_float(
+        node,
+        "~tracked_reprojection_min_image_edge",
+        0.05,
+        "Minimum image-edge strength required for a tracked feature to contribute to the reprojection error metric.",
+        min_value=0.0,
+        max_value=1.0,
+    )
+    tracked_reprojection_log_period_sec = _get_float(
+        node,
+        "~tracked_reprojection_log_period_sec",
+        2.0,
+        "Minimum seconds between tracked reprojection status logs.",
+        min_value=0.0,
+    )
+    online_calibration_step_deg = _get_float(
+        node,
+        "~online_calibration_step_deg",
+        0.20,
+        "Finite-difference perturbation step in degrees for rotational misalignment estimation.",
+        min_value=0.0,
+    )
+    if online_calibration_step_deg <= 0.0:
+        raise ValueError("~online_calibration_step_deg must be > 0")
+    online_calibration_learning_rate = _get_float(
+        node,
+        "~online_calibration_learning_rate",
+        0.25,
+        "Update gain for online rotational correction (smaller is more conservative).",
+        min_value=0.0,
+    )
+    if online_calibration_learning_rate <= 0.0:
+        raise ValueError("~online_calibration_learning_rate must be > 0")
+    online_calibration_max_correction_deg = _get_float(
+        node,
+        "~online_calibration_max_correction_deg",
+        3.0,
+        "Clamp for each correction angle component (roll/pitch/yaw) in degrees.",
+        min_value=0.0,
+    )
+    if online_calibration_max_correction_deg <= 0.0:
+        raise ValueError("~online_calibration_max_correction_deg must be > 0")
+    online_calibration_min_sem_edge_density = _get_float(
+        node,
+        "~online_calibration_min_sem_edge_density",
+        0.010,
+        "Minimum semantic-edge density required for online calibration observability gating.",
+        min_value=0.0,
+    )
+    if online_calibration_min_sem_edge_density <= 0.0:
+        raise ValueError("~online_calibration_min_sem_edge_density must be > 0")
+    online_calibration_min_depth_edge_density = _get_float(
+        node,
+        "~online_calibration_min_depth_edge_density",
+        0.010,
+        "Minimum depth-edge density required for online calibration observability gating.",
+        min_value=0.0,
+    )
+    if online_calibration_min_depth_edge_density <= 0.0:
+        raise ValueError("~online_calibration_min_depth_edge_density must be > 0")
+    online_calibration_health_ema_alpha = _get_float(
+        node,
+        "~online_calibration_health_ema_alpha",
+        0.15,
+        "EMA alpha used by the online calibration health estimator.",
+        min_value=0.0,
+        max_value=1.0,
+    )
+    if not 0.0 < online_calibration_health_ema_alpha <= 1.0:
+        raise ValueError("~online_calibration_health_ema_alpha must be in (0, 1]")
+    online_calibration_health_std_scale = _get_float(
+        node,
+        "~online_calibration_health_std_scale",
+        0.08,
+        "Std-dev scaling term used by the online calibration health estimator.",
+        min_value=0.0,
+    )
+    if online_calibration_health_std_scale <= 0.0:
+        raise ValueError("~online_calibration_health_std_scale must be > 0")
+    online_calibration_health_score_scale = _get_float(
+        node,
+        "~online_calibration_health_score_scale",
+        0.10,
+        "Score scale used by the online calibration health estimator.",
+        min_value=0.0,
+    )
+    if online_calibration_health_score_scale <= 0.0:
+        raise ValueError("~online_calibration_health_score_scale must be > 0")
+    online_calibration_log_period_sec = _get_float(
+        node,
+        "~online_calibration_log_period_sec",
+        2.0,
+        "Minimum seconds between online calibration status logs.",
+        min_value=0.0,
+    )
+
+    return CalibrationConfig(
+        tracked_reprojection_enable=node._get_param_bool(
+            "~tracked_reprojection_enable",
+            False,
+            "Enable stateful feature-tracked LiDAR reprojection diagnostics. This is heavier than the online edge score and is intended mainly for offline rosbag review.",
+        ),
+        tracked_reprojection_max_corners=_get_int(
+            node,
+            "~tracked_reprojection_max_corners",
+            300,
+            "Maximum number of tracked image features used by the tracked reprojection diagnostic.",
+            min_value=20,
+        ),
+        tracked_reprojection_quality_level=tracked_reprojection_quality_level,
+        tracked_reprojection_min_distance_px=tracked_reprojection_min_distance_px,
+        tracked_reprojection_min_tracks=_get_int(
+            node,
+            "~tracked_reprojection_min_tracks",
+            80,
+            "Minimum number of active tracks to maintain before replenishing features.",
+            min_value=10,
+        ),
+        tracked_reprojection_fb_thresh_px=tracked_reprojection_fb_thresh_px,
+        tracked_reprojection_depth_edge_thresh=_get_float(
+            node,
+            "~tracked_reprojection_depth_edge_thresh",
+            0.15,
+            "Normalized LiDAR depth-edge threshold used to convert the projected depth map into an edge target for tracked reprojection.",
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        tracked_reprojection_min_image_edge=tracked_reprojection_min_image_edge,
+        tracked_reprojection_log_period_sec=tracked_reprojection_log_period_sec,
+        online_calibration_enable=node._get_param_bool(
+            "~online_calibration_enable",
+            False,
+            "Enable lightweight online LiDAR-camera misalignment estimation with health/uncertainty and small projection correction (classical, no neural models).",
+        ),
+        online_calibration_every_n_frames=_get_int(
+            node,
+            "~online_calibration_every_n_frames",
+            10,
+            "Run online calibration update every N lidar callbacks (>=1).",
+            min_value=1,
+        ),
+        online_calibration_max_points=_get_int(
+            node,
+            "~online_calibration_max_points",
+            8000,
+            "Max number of LiDAR points used by online calibration updates (uniform stride subsampling above this).",
+            min_value=200,
+        ),
+        online_calibration_edge_threshold=_get_float(
+            node,
+            "~online_calibration_edge_threshold",
+            0.20,
+            "Edge threshold in [0,1] used for observability density checks on semantic/depth edge maps.",
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        online_calibration_step_deg=online_calibration_step_deg,
+        online_calibration_learning_rate=online_calibration_learning_rate,
+        online_calibration_max_correction_deg=online_calibration_max_correction_deg,
+        online_calibration_min_observability=_get_float(
+            node,
+            "~online_calibration_min_observability",
+            0.15,
+            "Minimum observability score required before online calibration updates are allowed.",
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        online_calibration_min_fov_points=_get_int(
+            node,
+            "~online_calibration_min_fov_points",
+            500,
+            "Minimum number of in-camera-FOV points needed for online calibration to proceed.",
+            min_value=1,
+        ),
+        online_calibration_min_sem_edge_density=online_calibration_min_sem_edge_density,
+        online_calibration_min_depth_edge_density=online_calibration_min_depth_edge_density,
+        online_calibration_health_ema_alpha=online_calibration_health_ema_alpha,
+        online_calibration_health_std_window=_get_int(
+            node,
+            "~online_calibration_health_std_window",
+            40,
+            "Sliding window size used by the online calibration health estimator.",
+            min_value=2,
+        ),
+        online_calibration_health_std_scale=online_calibration_health_std_scale,
+        online_calibration_health_score_center=_get_float(
+            node,
+            "~online_calibration_health_score_center",
+            0.25,
+            "Score center used by the online calibration health estimator.",
+            min_value=0.0,
+        ),
+        online_calibration_health_score_scale=online_calibration_health_score_scale,
+        online_calibration_log_period_sec=online_calibration_log_period_sec,
     )
 
 

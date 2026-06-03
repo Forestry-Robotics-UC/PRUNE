@@ -13,8 +13,10 @@ if str(ROS_SRC) not in sys.path:
     sys.path.insert(0, str(ROS_SRC))
 
 from entfac_fusion_ros.colored_pcl.config import (
+    load_calibration_config,
     load_color_config,
     load_debug_config,
+    load_experiment_config,
     load_ply_config,
     load_projection_config,
     load_sync_config,
@@ -134,6 +136,35 @@ class ColoredPclConfigTests(unittest.TestCase):
 
             self.assertEqual(config.ply_output_dir, str(output_dir))
             self.assertTrue(output_dir.exists())
+
+    def test_experiment_config_preserves_variant_flags(self):
+        node = MockNode(
+            {
+                "~use_invalid_mask": False,
+                "~use_depth_edge_rejection": False,
+                "~use_occlusion_gate": True,
+                "~experiment_variant_name": "full",
+                "~bag_name": "bag_a",
+                "~results_dir": "/tmp/results",
+                "~enable_metrics_csv": True,
+            }
+        )
+
+        config = load_experiment_config(node)
+
+        self.assertFalse(config.use_invalid_mask)
+        self.assertFalse(config.use_depth_edge_rejection)
+        self.assertTrue(config.use_occlusion_gate)
+        self.assertEqual(config.experiment_variant_name, "full")
+        self.assertEqual(config.experiment_bag_name, "bag_a")
+        self.assertEqual(config.results_dir, "/tmp/results")
+        self.assertTrue(config.enable_metrics_csv)
+
+    def test_calibration_config_rejects_too_small_track_budget(self):
+        node = MockNode({"~tracked_reprojection_min_tracks": 5})
+
+        with self.assertRaises(ValueError):
+            load_calibration_config(node)
 
 
 if __name__ == "__main__":

@@ -1,31 +1,45 @@
-"""Shared dataclasses for the colored point-cloud pipeline."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# ENTFAC Sensor Fusion implementation.
+#
+# Modified by:
+#   Duda Andrada (ENTFAC Sensor Fusion)
+#
+# Author: Duda Andrada
+# Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
+# License: GNU General Public License v3.0 (GPL-3.0)
+# Repository: ENTFAC-Sensor-Fusion
+#
+# Description:
+#   Shared dataclasses for the colored point-cloud node refactor.
+
+"""Shared dataclasses for the colored point-cloud node refactor."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
-import rospy
 
-from entfac_fusion_core.types import SemanticPointCloud
+try:
+    import rospy
+except ImportError:  # pragma: no cover - optional for non-ROS import paths
+    rospy = None  # type: ignore[assignment]
 
 
 @dataclass
 class PipelineResult:
-    """Lightweight result object for future pipeline extraction phases."""
-
     cloud: SemanticPointCloud
     stamp: rospy.Time
     frame_id: str
     callback_sec: float
-    debug: dict
+    debug: Dict[str, Any]
 
 
 @dataclass
 class LastPcl:
-    """Last published cloud payload used by the PLY recorder."""
-
     stamp: rospy.Time
     points_xyz: np.ndarray
     labels: np.ndarray
@@ -35,10 +49,11 @@ class LastPcl:
 
 @dataclass
 class SemanticInputs:
-    """Parsed semantic inputs shared by the current and future pipeline stages."""
-
     labels: Optional[np.ndarray]
     packed_rgb: Optional[np.ndarray]
     confidence: Optional[np.ndarray]
     projection_invalid_mask: Optional[np.ndarray]
     rgb_lut: Optional[np.ndarray]
+
+
+__all__ = ["PipelineResult", "LastPcl", "SemanticInputs"]

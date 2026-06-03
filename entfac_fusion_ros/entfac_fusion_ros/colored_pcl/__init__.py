@@ -1,9 +1,6 @@
-"""Shared colored point-cloud refactoring helpers.
+"""Shared colored point-cloud refactoring helpers."""
 
-This subpackage hosts the reusable config loaders while the shared dataclasses
-remain available from their concrete modules during the refactor.
-"""
-
+from .results import LastPcl, PipelineResult, SemanticInputs
 from .config import (
     ColorConfig,
     DebugConfig,
@@ -18,6 +15,9 @@ from .config import (
 )
 
 __all__ = [
+    "LastPcl",
+    "PipelineResult",
+    "SemanticInputs",
     "ColorConfig",
     "DebugConfig",
     "PlyConfig",
