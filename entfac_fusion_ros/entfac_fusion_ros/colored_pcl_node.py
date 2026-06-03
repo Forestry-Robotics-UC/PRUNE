@@ -106,7 +106,6 @@ import io
 import pstats
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -162,38 +161,6 @@ def _rosargv_bool(name: str, default: bool = False) -> bool:
         if arg.startswith(prefix):
             return _coerce_bool(arg[len(prefix) :])
     return default
-
-
-@dataclass
-class _ProjectionQualityResult:
-    keep: np.ndarray
-    confidence_reject: np.ndarray
-    depth_edge_reject: np.ndarray
-    occlusion_reject: np.ndarray
-    depth_edge_map: Optional[np.ndarray]
-    runtime_rasterize_ms: float = 0.0
-    runtime_depth_edge_ms: float = 0.0
-    runtime_occlusion_ms: float = 0.0
-
-
-@dataclass
-class _ProjectionMetrics:
-    num_points_in_front: int = 0
-    num_points_projected_in_image: int = 0
-    num_rejected_invalid_mask: int = 0
-    num_rejected_confidence: int = 0
-    num_rejected_depth_edge: int = 0
-    num_rejected_occlusion: int = 0
-    num_rejected_other: int = 0
-    num_would_hit_invalid_mask: int = 0
-    num_would_hit_depth_edge: int = 0
-    num_would_fail_occlusion: int = 0
-    runtime_projection_ms: float = 0.0
-    runtime_mask_ms: float = 0.0
-    runtime_rasterize_ms: float = 0.0
-    runtime_depth_edge_ms: float = 0.0
-    runtime_occlusion_ms: float = 0.0
-    runtime_publish_ms: float = 0.0
 
 
 class ColoredPclNode:
@@ -684,15 +651,6 @@ class ColoredPclNode:
 
     def _lookup_transform_with_stamp(self, target_frame, source_frame, stamp):
         return self._tf_resolver.lookup_with_stamp(target_frame, source_frame, stamp)
-
-    @staticmethod
-    def _scale_intrinsics(intrinsics, factor):
-        scaled = intrinsics.copy()
-        scaled[0, 0] /= factor
-        scaled[1, 1] /= factor
-        scaled[0, 2] /= factor
-        scaled[1, 2] /= factor
-        return scaled
 
     @contextmanager
     def _maybe_profile(self, label):
