@@ -107,7 +107,8 @@ import pstats
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import numpy as np
 import rospy
@@ -134,6 +135,7 @@ for parent in _THIS.parents:
 from entfac_fusion_ros.colored_pcl_params import coerce_bool as _coerce_bool
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
+from entfac_fusion_ros.colored_pcl.config import ColorConfig, ProjectionConfig, SyncConfig
 from entfac_fusion_ros.colored_pcl.frame_inputs import FrameInputPreparer
 from entfac_fusion_ros.colored_pcl.initializer import NodeInitializer
 from entfac_fusion_ros.colored_pcl.param_reader import ParamReader
@@ -145,12 +147,6 @@ from entfac_fusion_ros.colored_pcl.startup_reporting import StartupReporter
 from entfac_fusion_ros.colored_pcl.sync_policy import StampPolicy
 from entfac_fusion_ros.colored_pcl.tf_resolver import TransformResolver
 from entfac_fusion_ros.colored_pcl.tracked_reprojection_runtime import TrackedReprojectionRuntime
-from entfac_fusion_ros.colored_pcl_startup import (
-    log_correction_statuses as _log_correction_statuses_helper,
-    log_param_report as _log_param_report_helper,
-    log_startup_transforms as _log_startup_transforms_helper,
-    render_startup_table as _render_startup_table_helper,
-)
 from entfac_fusion_ros.logging_ros import NodeLogger, configure_core_logging
 from entfac_fusion_ros.status import StatusReporter
 
@@ -679,9 +675,6 @@ class ColoredPclNode:
             return False
         self._cv2 = cv2
         return True
-
-    def _maybe_init_undistort(self) -> None:
-        self._camera_model._maybe_init_undistort()
 
     def _undistort_array(self, data: np.ndarray, *, interpolation: str) -> np.ndarray:
         return self._camera_model.undistort_array(data, interpolation=interpolation)
