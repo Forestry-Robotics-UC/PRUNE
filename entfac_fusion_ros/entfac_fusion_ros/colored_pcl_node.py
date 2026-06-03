@@ -105,14 +105,12 @@ import cProfile
 import io
 import pstats
 import sys
-import time
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import rospy
-from sensor_msgs.msg import CameraInfo
 
 try:
     from dynamic_reconfigure.server import Server as DynamicReconfigureServer
@@ -133,11 +131,6 @@ for parent in _THIS.parents:
         sys.path.insert(0, str(cand))
         break
 
-from entfac_fusion_core.utils.validation import require_homogeneous_transform
-
-from entfac_fusion_ros.lidar_projector import LidarProjector
-from entfac_fusion_ros.online_calibration import OnlineCalibration
-from entfac_fusion_ros.tracked_reprojection import TrackedReprojection
 from entfac_fusion_ros.colored_pcl_params import (
     coerce_bool as _coerce_bool,
     get_color_map as _get_color_map_helper,
@@ -150,30 +143,15 @@ from entfac_fusion_ros.colored_pcl_params import (
     load_camera_info_txt as _load_camera_info_txt_helper,
     record_param as _record_param_helper,
 )
-from entfac_fusion_ros.colored_pcl.config import (
-    load_calibration_config,
-    load_color_config,
-    load_debug_config,
-    load_experiment_config,
-    load_ply_config,
-    load_projection_config,
-    load_sync_config,
-)
-from entfac_fusion_ros.colored_pcl.results import LastPcl
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
-from entfac_fusion_ros.colored_pcl.live_tuning import LiveTuningController
-from entfac_fusion_ros.colored_pcl.metrics_reporting import MetricsReporter
-from entfac_fusion_ros.colored_pcl.ros_io import ColoredPclRosIo
+from entfac_fusion_ros.colored_pcl.initializer import NodeInitializer
 from entfac_fusion_ros.colored_pcl.ply_service import PlyRecordingService
-from entfac_fusion_ros.colored_pcl import runtime_builders
-from entfac_fusion_ros.colored_pcl.diagnostics import DiagnosticsOrchestrator
-from entfac_fusion_ros.colored_pcl.depth_pipeline import DepthFusionPipeline
+from entfac_fusion_ros.colored_pcl.runtime_setup import RuntimeSetup
 from entfac_fusion_ros.colored_pcl.online_calibration_bridge import OnlineCalibrationBridge
 from entfac_fusion_ros.colored_pcl.semantic_inputs import SemanticInputParser
 from entfac_fusion_ros.colored_pcl.sync_policy import StampPolicy
 from entfac_fusion_ros.colored_pcl.tf_resolver import TransformResolver
-from entfac_fusion_ros.colored_pcl.lidar_pipeline import LidarFusionPipeline
 from entfac_fusion_ros.colored_pcl.tracked_reprojection_runtime import TrackedReprojectionRuntime
 from entfac_fusion_ros.colored_pcl_startup import (
     log_correction_statuses as _log_correction_statuses_helper,
@@ -183,7 +161,6 @@ from entfac_fusion_ros.colored_pcl_startup import (
 )
 from entfac_fusion_ros.logging_ros import NodeLogger, configure_core_logging
 from entfac_fusion_ros.status import StatusReporter
-from entfac_fusion_ros.tf_utils import format_matrix
 
 try:
     from entfac_fusion_ros.cfg import ColoredPclTuningConfig
@@ -456,20 +433,8 @@ class ColoredPclNode:
             "~compat_declared_lidar_T_points",
             "Optional static 4x4 row-major matrix mapping incoming point-data coordinates into the declared LiDAR frame. Applied before deskew/projection. Overrides the built-in ~compat_ouster_sensor_frame transform when provided.",
         )
-        if self._compat_declared_lidar_T_points is not None:
-            self._compat_lidar_points_status = "active (custom matrix)"
-        elif self.compat_ouster_sensor_frame:
-            # Default Ouster sensor->lidar compatibility transform for legacy bags
-            # where XYZLut output was published as os_lidar. The 38.195 mm z-offset
-            # comes from the recorded metadata.lidar_to_sensor_transform.
-            compat = np.eye(4, dtype=float)
-            compat[0, 0] = -1.0
-            compat[1, 1] = -1.0
-            compat[2, 3] = -0.038195
-            self._compat_declared_lidar_T_points = require_homogeneous_transform(compat)
-            self._compat_lidar_points_status = "active (ouster sensor->lidar)"
-        else:
-            self._compat_lidar_points_status = "disabled"
+        self._initializer = NodeInitializer(self)
+        self._initializer.configure_compat_transforms()
         self.conf_topic = self._get_param_str(
             "~confidence_topic",
             None,
@@ -505,35 +470,7 @@ class ColoredPclNode:
                 "~depth_input_topic is required (sensor_msgs/Image depth or sensor_msgs/PointCloud2 LiDAR)"
             )
 
-        sync_config = load_sync_config(self)
-        self._apply_loaded_config(sync_config)
-        color_config = load_color_config(self)
-        self._apply_loaded_config(color_config)
-        projection_config = load_projection_config(self)
-        self._apply_loaded_config(projection_config)
-        debug_config = load_debug_config(self)
-        self._apply_loaded_config(debug_config)
-        experiment_config = load_experiment_config(self)
-        self._apply_loaded_config(experiment_config)
-        calibration_config = load_calibration_config(self)
-        self._apply_loaded_config(calibration_config)
-        self._online_calibration_requested = bool(self.online_calibration_enable)
-        self._online_calibration_status = (
-            "requested" if self._online_calibration_requested else "disabled"
-        )
-        self._undistort_requested = bool(self.undistort_semantic)
-        self._undistort_status = (
-            "requested" if self._undistort_requested else "disabled"
-        )
-        self._rolling_shutter_requested = bool(self.rolling_shutter_enable)
-        self._rolling_shutter_status = (
-            "requested" if self._rolling_shutter_requested else "disabled"
-        )
-        self._lidar_deskew_requested = bool(self.lidar_deskew_enable)
-        self._lidar_deskew_status = (
-            "requested" if self._lidar_deskew_requested else "disabled"
-        )
-        self._apply_loaded_config(load_ply_config(self))
+        self._initializer.load_runtime_config()
         # Fixed debug projection settings to avoid extra parameters.
         self.debug_projected_topic = "/debug/lidar_projection"
         self.debug_lidar_depth_topic = "/debug/lidar_depth"
@@ -617,88 +554,9 @@ class ColoredPclNode:
         self.tf_buffer = self._tf_resolver.tf_buffer
         self.tf_listener = self._tf_resolver.tf_listener
         self._bootstrap = StartupBootstrap(self, self._log)
+        self._runtime_setup = RuntimeSetup(self)
 
-        self._camera_info_source = ""
-        if self.camera_info_txt:
-            (
-                intrinsics,
-                frame_id_from_file,
-                distortion,
-                distortion_model,
-                camera_info_size,
-                resolved_path,
-            ) = self._load_camera_info_txt(self.camera_info_txt)
-            self.intrinsics = intrinsics
-            self.intrinsics_raw = self.intrinsics.copy()
-            self._camera_distortion = distortion
-            self._camera_distortion_model = distortion_model
-            self._camera_info_size = camera_info_size
-            self.camera_frame = frame_id_from_file or self.camera_frame_param
-            if not self.camera_frame:
-                raise ValueError(
-                    "~camera_info_txt requires a camera frame. Add frame_id/camera_frame in the file or set ~camera_frame."
-                )
-            self._camera_info_source = f"txt:{resolved_path}"
-            if self.camera_info_topic:
-                self._log.info(
-                    "__init__",
-                    "Using camera intrinsics from ~camera_info_txt=%s (topic ~camera_info=%s is ignored for intrinsics).",
-                    resolved_path,
-                    self.camera_info_topic,
-                )
-            self._log.info(
-                "__init__",
-                "Camera intrinsics loaded from file: frame_id=%s size=%dx%d",
-                self.camera_frame,
-                int(self._camera_info_size[1]),
-                int(self._camera_info_size[0]),
-            )
-            self._log.debug(
-                "__init__",
-                "Intrinsics K (file)=\n%s",
-                format_matrix(self.intrinsics),
-            )
-        else:
-            self._log.debug(
-                "__init__", "Waiting for CameraInfo on topic=%s", self.camera_info_topic
-            )
-            cam_info = None
-            wait_start = time.time()
-            next_warn = wait_start + 5.0
-            while cam_info is None and not rospy.is_shutdown():
-                cam_info = self._bootstrap.wait_for_msg(
-                    self.camera_info_topic,
-                    CameraInfo,
-                    timeout=1.0,
-                    warn_on_timeout=False,
-                )
-                if cam_info is None and time.time() >= next_warn:
-                    self._log.warn(
-                        "__init__",
-                        "Waiting for CameraInfo on %s (check topic name and bag/driver)",
-                        self.camera_info_topic,
-                    )
-                    next_warn = time.time() + 5.0
-            if cam_info is None:
-                raise rospy.ROSInterruptException("Shutdown while waiting for CameraInfo")
-            self.intrinsics = np.asarray(cam_info.K, dtype=float).reshape(3, 3)
-            self.camera_frame = cam_info.header.frame_id
-            self._log.debug(
-                "__init__",
-                "CameraInfo received: frame_id=%s stamp=%.6f",
-                self.camera_frame,
-                cam_info.header.stamp.to_sec(),
-            )
-            self._log.debug("__init__", "Intrinsics K=\n%s", format_matrix(self.intrinsics))
-            self.intrinsics_raw = self.intrinsics.copy()
-            self._camera_distortion = (
-                np.asarray(cam_info.D, dtype=float) if cam_info.D else None
-            )
-            self._camera_distortion_model = (
-                (cam_info.distortion_model or "").strip().lower()
-            )
-            self._camera_info_size = (int(cam_info.height), int(cam_info.width))
-            self._camera_info_source = f"topic:{self.camera_info_topic}"
+        self._initializer.load_camera_info()
 
         self._output_topic = rospy.resolve_name("semantic_pointcloud")
         self.target_T_depth = None
@@ -767,99 +625,17 @@ class ColoredPclNode:
             ),
             self._log,
         )
-        self._tf_cache = self._tf_resolver.tf_cache
-        self._bootstrap.prime_transforms()
-        self._undistort_map1 = getattr(self._camera_model, "_undistort_map1", None)
-        self._undistort_map2 = getattr(self._camera_model, "_undistort_map2", None)
-        self._undistort_active = bool(getattr(self._camera_model, "_undistort_active", False))
-        self._cv2 = getattr(self._camera_model, "_cv2", None)
-        self._imu_cache = None
-        self._imu_sub = None
-        self._imu_to_camera_R = None
-        self._metadata_latest = {}
-        self._metadata_sub = None
-        self._lidar_imu_cache = None
-        self._lidar_imu_sub = None
-        self._lidar_imu_to_lidar_R = None
-        self._debug_callback_seq = 0
-        self._rolling_shutter_log_at = 0.0
-        self._rolling_shutter_warn_at = 0.0
-        self._lidar_deskew_log_at = 0.0
-        self._lidar_deskew_warn_at = 0.0
-        self._lidar_deskew_missing_time_warn_at = 0.0
-        self._live_param_refresh_period_sec = 0.5
-        self._live_param_last_refresh_at = 0.0
-        self._dynamic_reconfigure_server = None
-        self._dynamic_reconfigure_initialized = False
+        self._runtime_setup.initialize_runtime_state()
 
-        if self.tracked_reprojection_enable:
-            if self.mode != "lidar":
-                self._log.warn(
-                    "__init__",
-                    "tracked_reprojection_enable=true requires lidar mode; disabling because mode=%s",
-                    self.mode,
-                )
-                self.tracked_reprojection_enable = False
-            else:
-                self._log.warn(
-                    "__init__",
-                    "Tracked reprojection diagnostics are stateful and CPU-heavier than the online path; use them primarily for offline bag review or focused validation runs.",
-                )
+        self._runtime_setup.validate_mode_dependent_flags()
 
-        self._rgb_lut = None
-        self._rgb_lut_num_labels = None
-        self._warned_random_palette = False
-        self._warned_rgb_color_map = False
-        self._logged_depth_scaling = False
-        self._logged_depth_summary = False
-        self._logged_lidar_summary = False
-        self._stamp_debug_last_log_at = 0.0
-
-        self._ply_writer = self._ply_service._writer
-        self._ply_recording = False
-        self._ply_queue_warned_at = 0.0
-        self._ply_seq = 0
-        self._last_pcl: Optional[LastPcl] = None
-        self._results_frame_index = 0
-        self._metrics_logger = None
-        self._results_run_dir = None
-        self._metrics_reporter = MetricsReporter(self)
-        self._metrics_reporter.setup()
-
-        self._ply_service.setup()
-
-        # Persistent buffers for LiDAR rasterization — kept here for the
-        # _publish_range_view_debug and online-calibration paths that call
-        # _rasterize_lidar_depth_map / _depth_map_to_edge_map directly.
-        # The projector owns its own copies; these are legacy for those paths.
-        self._depth_buffer: Optional[np.ndarray] = None
-        self._depth_buffer_shape: Optional[Tuple[int, int]] = None
-        self._edge_buffer: Optional[np.ndarray] = None
-        self._edge_buffer_shape: Optional[Tuple[int, int]] = None
-
-        # Pure-numpy projection engine — no ROS dependency.
-        self._runtime_builders = runtime_builders
-        self._projector = LidarProjector(self._runtime_builders.build_projector_params(self))
-
-        # Optional subsystems — None when disabled so hot path has zero branch cost.
-        self._calibration: Optional[OnlineCalibration] = self._calibration_bridge.build(self._projector)
-        self._tracked_repr: Optional[TrackedReprojection] = self._tracked_runtime.build()
-        self._debug_pub = self._runtime_builders.build_debug_publisher(self)
-        self._diagnostics = DiagnosticsOrchestrator(self, self._debug_pub)
-        self._depth_pipeline = DepthFusionPipeline(self)
-        self._lidar_pipeline = LidarFusionPipeline(self)
-
-        self._ros_io = ColoredPclRosIo(self)
-        self._live_tuning = LiveTuningController(
-            self,
-            self._log,
+        self._runtime_setup.setup_metrics_and_ply()
+        self._runtime_setup.setup_projector_and_buffers()
+        self._runtime_setup.setup_subsystems()
+        self._runtime_setup.setup_ros_runtime(
             DynamicReconfigureServer,
             ColoredPclTuningConfig,
         )
-        self._ros_io.setup_publishers()
-        self._live_tuning.setup_dynamic_reconfigure()
-        self._ros_io.setup_services()
-        self._ros_io.register_subscribers()
         self._log.info("__init__", "\n%s", self._render_startup_table())
         self._log_correction_statuses()
         self._log_startup_transforms()
