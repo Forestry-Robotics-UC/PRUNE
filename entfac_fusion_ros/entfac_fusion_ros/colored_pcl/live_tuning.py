@@ -8,7 +8,7 @@ from typing import Any
 import rospy
 from sensor_msgs.msg import Image
 
-from entfac_fusion_ros.colored_pcl_params import coerce_bool as _coerce_bool
+from entfac_fusion_ros.colored_pcl.params import coerce_bool as _coerce_bool
 
 
 class LiveTuningController:

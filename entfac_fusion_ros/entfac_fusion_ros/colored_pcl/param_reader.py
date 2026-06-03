@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 
-from entfac_fusion_ros.colored_pcl_params import (
+from entfac_fusion_ros.colored_pcl.params import (
     get_color_map as _get_color_map_helper,
     get_matrix_param as _get_matrix_param_helper,
     get_param as _get_param_helper,

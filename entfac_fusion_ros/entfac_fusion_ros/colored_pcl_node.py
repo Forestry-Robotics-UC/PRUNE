@@ -131,7 +131,7 @@ for parent in _THIS.parents:
         sys.path.insert(0, str(cand))
         break
 
-from entfac_fusion_ros.colored_pcl_params import coerce_bool as _coerce_bool
+from entfac_fusion_ros.colored_pcl.params import coerce_bool as _coerce_bool
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
 from entfac_fusion_ros.colored_pcl.config import ColorConfig, ProjectionConfig, SyncConfig
