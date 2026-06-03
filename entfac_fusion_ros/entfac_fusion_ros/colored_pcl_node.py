@@ -106,7 +106,7 @@ import io
 import pstats
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -131,22 +131,12 @@ for parent in _THIS.parents:
         sys.path.insert(0, str(cand))
         break
 
-from entfac_fusion_ros.colored_pcl_params import (
-    coerce_bool as _coerce_bool,
-    get_color_map as _get_color_map_helper,
-    get_matrix_param as _get_matrix_param_helper,
-    get_param as _get_param_helper,
-    get_param_bool as _get_param_bool_helper,
-    get_param_float as _get_param_float_helper,
-    get_param_int as _get_param_int_helper,
-    get_param_str as _get_param_str_helper,
-    load_camera_info_txt as _load_camera_info_txt_helper,
-    record_param as _record_param_helper,
-)
+from entfac_fusion_ros.colored_pcl_params import coerce_bool as _coerce_bool
 from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
 from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
 from entfac_fusion_ros.colored_pcl.frame_inputs import FrameInputPreparer
 from entfac_fusion_ros.colored_pcl.initializer import NodeInitializer
+from entfac_fusion_ros.colored_pcl.param_reader import ParamReader
 from entfac_fusion_ros.colored_pcl.ply_service import PlyRecordingService
 from entfac_fusion_ros.colored_pcl.runtime_setup import RuntimeSetup
 from entfac_fusion_ros.colored_pcl.online_calibration_bridge import OnlineCalibrationBridge
@@ -217,6 +207,17 @@ class ColoredPclNode:
         self._param_meta: Dict[str, Dict[str, Any]] = {}
         self._node_name = rospy.get_name().lstrip("/")
         self._log = NodeLogger(self._node_name)
+        self._params = ParamReader(self)
+        self._record_param = self._params.record_param
+        self._get_param = self._params.get_param
+        self._get_param_str = self._params.get_param_str
+        self._get_param_bool = self._params.get_param_bool
+        self._get_param_int = self._params.get_param_int
+        self._get_param_float = self._params.get_param_float
+        self._get_matrix_param = self._params.get_matrix_param
+        self._get_color_map = self._params.get_color_map
+        self._apply_loaded_config = self._params.apply_loaded_config
+        self._load_camera_info_txt = self._params.load_camera_info_txt
 
         self.debug = self._get_param_bool(
             "~debug",
@@ -655,47 +656,6 @@ class ColoredPclNode:
         )
         if self.debug:
             self._startup_reporting.log_param_report()
-
-    # ----------------------------
-    # Param helpers (with meta)
-    # ----------------------------
-
-    def _record_param(self, name, value, source, description):
-        return _record_param_helper(self, name, value, source, description)
-
-    def _get_param(self, name, default, description, *, allow_empty=False):
-        return _get_param_helper(
-            self, name, default, description, allow_empty=allow_empty
-        )
-
-    def _get_param_str(self, name, default, description, *, allow_empty=False):
-        return _get_param_str_helper(
-            self, name, default, description, allow_empty=allow_empty
-        )
-
-    def _get_param_bool(self, name, default, description):
-        return _get_param_bool_helper(self, name, default, description)
-
-    def _get_param_int(self, name, default, description):
-        return _get_param_int_helper(self, name, default, description)
-
-    def _get_param_float(self, name, default, description):
-        return _get_param_float_helper(self, name, default, description)
-
-    def _get_matrix_param(self, name, description):
-        return _get_matrix_param_helper(self, name, description)
-
-    def _get_color_map(self, name, description):
-        return _get_color_map_helper(self, name, description)
-
-    def _apply_loaded_config(self, config: Any) -> None:
-        for field in fields(config):
-            setattr(self, field.name, getattr(config, field.name))
-
-    def _load_camera_info_txt(
-        self, txt_path: str
-    ) -> Tuple[np.ndarray, str, Optional[np.ndarray], str, Tuple[int, int], str]:
-        return _load_camera_info_txt_helper(self, txt_path)
 
     def _metadata_callback(self, msg) -> None:
         try:
