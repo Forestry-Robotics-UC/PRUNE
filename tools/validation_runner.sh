@@ -29,12 +29,12 @@ echo "========================================"
 echo ""
 echo "[Stage 1] Pre-flight checks..."
 rosbag info "$BAG_PATH" > "$OUTPUT_DIR/bag_info.txt" 2>&1 || true
-python3 -c "import sys; sys.path.insert(0, '/home/ros/ws/src/entfac_fusion'); from tools.validate_bag_workflow import capture_bag_topics; topics = capture_bag_topics('$BAG_PATH'); [print(t) for t in topics]" > "$OUTPUT_DIR/topics.txt" 2>&1 || true
+python3 -c "import sys; sys.path.insert(0, '/home/ros/ws/src/entfac_fusion'); from tools.validation.validate_bag_workflow import capture_bag_topics; topics = capture_bag_topics('$BAG_PATH'); [print(t) for t in topics]" > "$OUTPUT_DIR/topics.txt" 2>&1 || true
 
 # Stage 2: Sync offset analysis
 echo ""
 echo "[Stage 2] Analyzing sync offset..."
-python3 /home/ros/ws/src/entfac_fusion/tools/validate_bag_workflow.py \
+python3 /home/ros/ws/src/entfac_fusion/tools/validation/validate_bag_workflow.py \
     "$BAG_PATH" \
     --config "$CONFIG" \
     --output-dir "$OUTPUT_DIR" \

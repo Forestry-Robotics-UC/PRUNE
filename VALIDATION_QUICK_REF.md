@@ -189,7 +189,7 @@ docker-compose run --rm \
 |------|---------|
 | `tools/validate_curtmini_workflow.sh` | Main entry point |
 | `tools/validation_runner.sh` | Docker wrapper |
-| `tools/validate_bag_workflow.py` | Analysis engine |
+| `tools/validation/validate_bag_workflow.py` | Analysis engine |
 | `docs/VALIDATION_WORKFLOW.md` | Full documentation |
 | `entfac_fusion_ros/config/curt_mini.yaml` | CurtMini parameters |
 

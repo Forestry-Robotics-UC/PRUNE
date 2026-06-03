@@ -30,6 +30,34 @@ def _write_metrics(path: Path, rows):
 
 
 class ExperimentMetricsTests(unittest.TestCase):
+    def test_frame_metrics_accepts_queue_full_drop_reason(self):
+        metrics = FrameMetrics(
+            bag_name="bag_a",
+            variant_name="full",
+            pair_accepted=0,
+            drop_reason="queue_full",
+        )
+
+        row = metrics.to_row()
+
+        self.assertEqual(row["drop_reason"], "queue_full")
+
+    def test_frame_metrics_computes_ratio_fields_on_serialization(self):
+        metrics = FrameMetrics(
+            bag_name="bag_a",
+            variant_name="full",
+            num_points_projected_in_image=100,
+            num_would_hit_invalid_mask=25,
+            num_would_hit_depth_edge=10,
+            num_would_fail_occlusion=5,
+        )
+
+        row = metrics.to_row()
+
+        self.assertEqual(row["would_hit_invalid_mask_ratio"], 0.25)
+        self.assertEqual(row["would_hit_depth_edge_ratio"], 0.1)
+        self.assertEqual(row["would_fail_occlusion_ratio"], 0.05)
+
     def test_metrics_csv_logger_writes_required_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
             out_path = Path(tmp) / "bag_a" / "full" / "metrics_per_frame.csv"

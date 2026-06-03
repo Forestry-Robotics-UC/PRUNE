@@ -167,3 +167,42 @@ def apply_invalid_projection_samples(
         rgb_out[invalid_arr] = 0.0
 
     return labels_out, confidence_out, rgb_out
+
+
+def filter_invalid_projection_samples(
+    invalid: np.ndarray,
+    *,
+    points: np.ndarray = None,
+    labels: np.ndarray = None,
+    confidence: np.ndarray = None,
+    rgb_values: np.ndarray = None,
+):
+    """Drop projected samples marked invalid while preserving array alignment.
+
+    Invalid-mask pixels from perception represent rejected image evidence, not
+    black color observations.  This helper removes those projected samples from
+    every aligned output payload before the semantic point cloud is published.
+    """
+    invalid_arr = np.asarray(invalid)
+    if invalid_arr.ndim != 1:
+        invalid_arr = invalid_arr.reshape(-1)
+    if invalid_arr.dtype != np.bool_:
+        raise ValueError("invalid must be boolean")
+
+    n = int(invalid_arr.shape[0])
+    keep = ~invalid_arr
+
+    def _filter_aligned(name: str, values):
+        if values is None:
+            return None
+        arr = np.asarray(values)
+        if arr.shape[0] != n:
+            raise ValueError(f"{name} must be aligned with invalid")
+        return arr[keep]
+
+    return (
+        _filter_aligned("points", points),
+        _filter_aligned("labels", labels),
+        _filter_aligned("confidence", confidence),
+        _filter_aligned("rgb_values", rgb_values),
+    )

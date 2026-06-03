@@ -52,7 +52,7 @@ $COMPOSE_CMD run --rm \
     rosbag info /bags/ICNF/icnf_ikalibr_order_003_010_slim.bag > /output/bag_info.txt 2>&1
     
     echo '[INFO] Computing sync offsets...'
-    python3 /home/ros/ws/src/entfac_fusion/tools/validate_bag_workflow.py \\
+    python3 /home/ros/ws/src/entfac_fusion/tools/validation/validate_bag_workflow.py \\
         /bags/ICNF/icnf_ikalibr_order_003_010_slim.bag \\
         --config curt_mini.yaml \\
         --output-dir /output \\

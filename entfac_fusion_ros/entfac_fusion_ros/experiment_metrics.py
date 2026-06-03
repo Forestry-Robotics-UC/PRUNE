@@ -44,6 +44,7 @@ SUMMARY_FIELDS = [
     "p95_runtime_total_ms",
     "mean_runtime_projection_ms",
     "mean_runtime_mask_ms",
+    "mean_runtime_rasterize_ms",
     "mean_runtime_depth_edge_ms",
     "mean_runtime_occlusion_ms",
     "mean_runtime_publish_ms",
@@ -80,6 +81,7 @@ class FrameMetrics:
     runtime_total_ms: float = 0.0
     runtime_projection_ms: float = 0.0
     runtime_mask_ms: float = 0.0
+    runtime_rasterize_ms: float = 0.0
     runtime_depth_edge_ms: float = 0.0
     runtime_occlusion_ms: float = 0.0
     runtime_publish_ms: float = 0.0
