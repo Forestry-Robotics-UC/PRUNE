@@ -158,7 +158,7 @@ class DepthFusionPipeline:
 
     def process(self, sem_msg, depth_msg, conf_msg=None, invalid_mask_msg=None):
         t0 = time.perf_counter()
-        self._node._maybe_refresh_live_tuning_params()
+        self._node._live_tuning.maybe_refresh_params()
 
         result = self._node._stamp_policy.validate_depth_pair(sem_msg, depth_msg)
         if result is None:

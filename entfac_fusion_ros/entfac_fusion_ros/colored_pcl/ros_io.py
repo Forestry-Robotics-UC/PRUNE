@@ -47,12 +47,94 @@ class ColoredPclRosIo:
         self._node._srv_set_record = rospy.Service("~set_ply_recording", SetBool, self._node._srv_set_ply_recording)
         self._node._srv_save_ply = rospy.Service("~save_ply", Trigger, self._node._srv_save_ply)
 
+    def _configure_rolling_shutter_subscribers(self) -> None:
+        self._node._rolling_shutter_status = (
+            "disabled" if not self._node._rolling_shutter_requested else "requested"
+        )
+        if not self._node.rolling_shutter_enable:
+            return
+        if not self._node.imu_topic:
+            self._node._rolling_shutter_status = "disabled (missing ~imu_topic)"
+            self._node._log.warn(
+                "_register_subscribers",
+                "rolling_shutter_enable is true but ~imu_topic is empty; disabling rolling shutter.",
+            )
+            self._node.rolling_shutter_enable = False
+            return
+
+        self._node._imu_sub = Subscriber(self._node.imu_topic, Imu, queue_size=2000)
+        self._node._imu_cache = Cache(self._node._imu_sub, self._node.imu_cache_size)
+        if self._node.rolling_shutter_readout_sec > 0.0:
+            self._node._rolling_shutter_status = "armed (fixed readout)"
+        elif self._node.camera_metadata_topic and self._node.metadata_readout_key >= 0:
+            self._node._rolling_shutter_status = "armed (metadata readout)"
+        else:
+            self._node._rolling_shutter_status = "idle (readout=0 and metadata disabled)"
+
+        if self._node.camera_metadata_topic and self._node.metadata_readout_key >= 0:
+            try:
+                from realsense2_camera_msgs.msg import Metadata  # type: ignore
+            except Exception as exc:  # noqa: BLE001
+                self._node._log.warn(
+                    "_register_subscribers",
+                    "Cannot import realsense2_camera_msgs/Metadata (%s); metadata readout disabled.",
+                    exc,
+                )
+            else:
+                self._node._metadata_sub = rospy.Subscriber(
+                    self._node.camera_metadata_topic,
+                    Metadata,
+                    self._node._metadata_callback,
+                    queue_size=2000,
+                )
+
+    def _configure_lidar_deskew_subscribers(self) -> None:
+        self._node._lidar_deskew_status = (
+            "disabled" if not self._node._lidar_deskew_requested else "requested"
+        )
+        if not self._node.lidar_deskew_enable:
+            return
+        if not self._node.lidar_imu_topic:
+            self._node._lidar_deskew_status = "disabled (missing ~lidar_imu_topic)"
+            self._node._log.warn(
+                "_register_subscribers",
+                "lidar_deskew_enable is true but ~lidar_imu_topic is empty; disabling deskew.",
+            )
+            self._node.lidar_deskew_enable = False
+            return
+
+        self._node._lidar_imu_sub = Subscriber(self._node.lidar_imu_topic, Imu, queue_size=2000)
+        self._node._lidar_imu_cache = Cache(self._node._lidar_imu_sub, self._node.lidar_imu_cache_size)
+        self._node._lidar_deskew_status = "armed"
+
+    def _build_depth_sync_callback(self, conf_sub, invalid_mask_sub):
+        if conf_sub is not None and invalid_mask_sub is not None:
+            return self._node._depth_callback
+        if conf_sub is not None:
+            return lambda sem, depth, conf: self._node._depth_callback(sem, depth, conf, None)
+        if invalid_mask_sub is not None:
+            return lambda sem, depth, invalid_mask: self._node._depth_callback(
+                sem, depth, None, invalid_mask
+            )
+        return self._node._depth_callback
+
+    def _build_lidar_sync_callback(self, conf_sub, invalid_mask_sub):
+        if conf_sub is not None and invalid_mask_sub is not None:
+            return self._node._lidar_callback
+        if conf_sub is not None:
+            return lambda sem, lidar, conf: self._node._lidar_callback(sem, lidar, conf, None)
+        if invalid_mask_sub is not None:
+            return lambda sem, lidar, invalid_mask: self._node._lidar_callback(
+                sem, lidar, None, invalid_mask
+            )
+        return self._node._lidar_callback
+
     def register_subscribers(self) -> None:
         semantic_sub = Subscriber(self._node.semantic_topic, Image, queue_size=self._node.sync_queue_size)
         conf_sub = Subscriber(self._node.conf_topic, Image, queue_size=self._node.sync_queue_size) if self._node.conf_topic else None
         invalid_mask_sub = Subscriber(self._node.projection_invalid_mask_topic, Image, queue_size=self._node.sync_queue_size) if self._node.projection_invalid_mask_topic else None
-        self._node._configure_rolling_shutter_subscribers()
-        self._node._configure_lidar_deskew_subscribers()
+        self._configure_rolling_shutter_subscribers()
+        self._configure_lidar_deskew_subscribers()
         if self._node.mode == "depth":
             depth_sub = Subscriber(self._node.depth_input_topic, Image)
             subs = [semantic_sub, depth_sub]
@@ -61,7 +143,7 @@ class ColoredPclRosIo:
             if invalid_mask_sub is not None:
                 subs.append(invalid_mask_sub)
             sync = ApproximateTimeSynchronizer(subs, queue_size=self._node.sync_queue_size, slop=self._node.sync_slop_sec)
-            sync.registerCallback(self._node._build_depth_sync_callback(conf_sub, invalid_mask_sub))
+            sync.registerCallback(self._build_depth_sync_callback(conf_sub, invalid_mask_sub))
         else:
             lidar_sub = Subscriber(self._node.depth_input_topic, PointCloud2)
             subs = [semantic_sub, lidar_sub]
@@ -70,6 +152,5 @@ class ColoredPclRosIo:
             if invalid_mask_sub is not None:
                 subs.append(invalid_mask_sub)
             sync = ApproximateTimeSynchronizer(subs, queue_size=self._node.sync_queue_size, slop=self._node.sync_slop_sec)
-            sync.registerCallback(self._node._build_lidar_sync_callback(conf_sub, invalid_mask_sub))
+            sync.registerCallback(self._build_lidar_sync_callback(conf_sub, invalid_mask_sub))
         self._node._sync = sync
-

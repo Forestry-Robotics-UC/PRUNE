@@ -476,7 +476,7 @@ class LidarFusionPipeline:
         frame_index = int(self._node._results_frame_index)
         self._node._results_frame_index += 1
         pair_dt_sec = self._node._stamp_policy.compute_pair_dt_sec(sem_msg, lidar_msg)
-        self._node._maybe_refresh_live_tuning_params()
+        self._node._live_tuning.maybe_refresh_params()
 
         result = self._node._stamp_policy.validate_lidar_pair(sem_msg, lidar_msg)
         if result is None:
