@@ -1,4 +1,4 @@
-"""Diagnostics orchestration for colored PCL."""
+"""Diagnostics orchestration for prune."""
 
 from __future__ import annotations
 

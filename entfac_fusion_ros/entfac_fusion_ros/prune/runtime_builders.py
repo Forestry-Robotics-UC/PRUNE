@@ -1,4 +1,4 @@
-"""Runtime builder helpers for colored PCL."""
+"""Runtime builder helpers for prune."""
 
 from __future__ import annotations
 

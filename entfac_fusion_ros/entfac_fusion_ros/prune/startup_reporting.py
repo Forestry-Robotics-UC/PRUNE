@@ -1,4 +1,4 @@
-"""Startup and status reporting helpers for colored PCL."""
+"""Startup and status reporting helpers for prune."""
 
 from __future__ import annotations
 

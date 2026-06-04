@@ -1,4 +1,4 @@
-"""Live tuning and dynamic reconfigure support for colored PCL."""
+"""Live tuning and dynamic reconfigure support for prune node."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class LiveTuningController:
             if self._server_cls is None:
                 missing.append("dynamic_reconfigure.server")
             if self._config_cls is None:
-                missing.append("entfac_fusion_ros.cfg.ColoredPclTuningConfig")
+                missing.append("entfac_fusion_ros.cfg.PruneTuningConfig")
             self._log.warn(
                 "_setup_dynamic_reconfigure",
                 "rqt_reconfigure support is unavailable because %s could not be imported. Build the catkin workspace so the generated dynamic_reconfigure modules exist.",
@@ -78,9 +78,9 @@ class LiveTuningController:
             )
 
         if changes:
-            self._node._projector.update_params(self._node._runtime_builders.build_projector_params())
+            self._node._projector.update_params(self._node._runtime_builders.build_projector_params(self._node))
             if self._node._debug_pub is not None:
-                self._node._debug_pub.update_params(self._node._runtime_builders.build_debug_pub_params())
+                self._node._debug_pub.update_params(self._node._runtime_builders.build_debug_pub_params(self._node))
             if log_source:
                 self._log.info(log_source, "Live tuning update: %s", ", ".join(changes))
         return bool(changes)

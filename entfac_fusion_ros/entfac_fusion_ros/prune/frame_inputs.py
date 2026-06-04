@@ -1,4 +1,4 @@
-"""Frame input preparation helpers for colored PCL."""
+"""Frame input preparation helpers for prune."""
 
 from __future__ import annotations
 

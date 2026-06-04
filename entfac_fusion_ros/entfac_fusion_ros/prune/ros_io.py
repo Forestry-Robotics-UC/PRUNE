@@ -1,4 +1,4 @@
-"""ROS wiring helpers for colored PCL."""
+"""ROS wiring helpers for prune."""
 
 from __future__ import annotations
 

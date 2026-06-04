@@ -1,4 +1,4 @@
-"""Metrics and startup-report helpers for colored PCL."""
+"""Metrics and startup-report helpers for prune."""
 
 from __future__ import annotations
 

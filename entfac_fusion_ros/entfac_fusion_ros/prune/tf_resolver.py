@@ -1,4 +1,4 @@
-"""TF lookup and transform priming helpers for colored PCL."""
+"""TF lookup and transform priming helpers for prune."""
 
 from __future__ import annotations
 

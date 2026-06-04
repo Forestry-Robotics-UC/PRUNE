@@ -1,4 +1,4 @@
-"""PLY recording helpers for colored PCL."""
+"""PLY recording helpers for prune."""
 
 from __future__ import annotations
 

@@ -36,11 +36,15 @@ class PruneNodeRosTest(unittest.TestCase):
         )
         self._sem_pub = rospy.Publisher("/test/semantic_labels", Image, queue_size=1)
         self._depth_pub = rospy.Publisher("/test/depth", Image, queue_size=1)
-        self._cam_pub = rospy.Publisher("/test/camera_info", CameraInfo, queue_size=1)
+        self._cam_pub = rospy.Publisher("/test/camera_info", CameraInfo, queue_size=1, latch=True)
 
         deadline = rospy.Time.now() + rospy.Duration(2.0)
         while (
-            self._cam_pub.get_num_connections() < 1
+            (
+                self._cam_pub.get_num_connections() < 1
+                or self._sem_pub.get_num_connections() < 1
+                or self._depth_pub.get_num_connections() < 1
+            )
             and rospy.Time.now() < deadline
             and not rospy.is_shutdown()
         ):
@@ -90,15 +94,15 @@ class PruneNodeRosTest(unittest.TestCase):
     def test_node_publishes_one_cloud(self):
         stamp = rospy.Time.now()
         cam = self._make_camera_info(stamp)
-        self._cam_pub.publish(cam)
-
         labels = np.array([[1, 2], [3, 4]], dtype=np.uint8)
         depth = np.array([[1.0, 0.0], [2.0, np.nan]], dtype=np.float32)
-        self._sem_pub.publish(self._make_image_mono8(labels, stamp))
-        self._depth_pub.publish(self._make_image_32fc1(depth, stamp))
 
         deadline = rospy.Time.now() + rospy.Duration(3.0)
         while self._got_pcl is None and rospy.Time.now() < deadline:
+            stamp = rospy.Time.now()
+            self._cam_pub.publish(self._make_camera_info(stamp))
+            self._sem_pub.publish(self._make_image_mono8(labels, stamp))
+            self._depth_pub.publish(self._make_image_32fc1(depth, stamp))
             rospy.sleep(0.05)
 
         self.assertIsNotNone(self._got_pcl, "no PointCloud2 published")

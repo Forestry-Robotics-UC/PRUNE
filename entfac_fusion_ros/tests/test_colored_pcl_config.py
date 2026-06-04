@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for grouped colored point-cloud config loaders."""
+"""Tests for grouped prune config loaders."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ class MockNode:
         return raw
 
 
-class ColoredPclConfigTests(unittest.TestCase):
+class PruneConfigTests(unittest.TestCase):
     def test_sync_config_normalizes_stamp_source(self):
         node = MockNode({
             "~cloud_stamp_source": "  Semantic  ",

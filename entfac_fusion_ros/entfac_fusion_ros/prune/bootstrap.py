@@ -1,4 +1,4 @@
-"""Startup probing and transform priming for colored PCL."""
+"""Startup probing and transform priming for prune."""
 
 from __future__ import annotations
 

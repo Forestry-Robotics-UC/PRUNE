@@ -1,4 +1,4 @@
-"""Camera intrinsics and undistortion helpers for colored PCL."""
+"""Camera intrinsics and undistortion helpers for prune."""
 
 from __future__ import annotations
 
@@ -102,7 +102,10 @@ class CameraModel:
         cam_info = None
         next_warn = time.time() + 5.0
         while cam_info is None and not rospy.is_shutdown():
-            cam_info = rospy.wait_for_message(self._node.camera_info_topic, CameraInfo, timeout=1.0)
+            try:
+                cam_info = rospy.wait_for_message(self._node.camera_info_topic, CameraInfo, timeout=1.0)
+            except rospy.ROSException:
+                cam_info = None
             if cam_info is None and time.time() >= next_warn:
                 self._log.warn("__init__", "Waiting for CameraInfo on %s (check topic name and bag/driver)", self._node.camera_info_topic)
                 next_warn = time.time() + 5.0

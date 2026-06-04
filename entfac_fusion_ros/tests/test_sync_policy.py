@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the colored PCL timestamp policy."""
+"""Tests for the prune timestamp policy."""
 
 from __future__ import annotations
 

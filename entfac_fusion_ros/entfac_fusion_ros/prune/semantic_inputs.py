@@ -1,4 +1,4 @@
-"""Semantic input parsing helpers for the colored PCL node."""
+"""Semantic input parsing helpers for the prune node."""
 
 from __future__ import annotations
 

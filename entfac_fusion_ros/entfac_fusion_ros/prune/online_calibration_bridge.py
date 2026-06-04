@@ -1,4 +1,4 @@
-"""Online calibration bridge for colored PCL."""
+"""Online calibration bridge for prune."""
 
 from __future__ import annotations
 

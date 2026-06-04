@@ -1,4 +1,4 @@
-"""Runtime assembly helpers for colored PCL node."""
+"""Runtime assembly helpers for prune node."""
 
 from __future__ import annotations
 

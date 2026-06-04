@@ -17,7 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_python_setup()
 
 generate_dynamic_reconfigure_options(
-  cfg/ColoredPclTuning.cfg
+  cfg/PruneTuning.cfg
 )
 
 catkin_package(

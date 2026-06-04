@@ -1,4 +1,4 @@
-"""Tracked reprojection runtime bridge for colored PCL."""
+"""Tracked reprojection runtime bridge for prune."""
 
 from __future__ import annotations
 

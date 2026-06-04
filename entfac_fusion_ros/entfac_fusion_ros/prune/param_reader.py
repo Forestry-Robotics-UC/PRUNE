@@ -1,4 +1,4 @@
-"""Parameter reader facade for colored PCL node setup."""
+"""Parameter reader facade for prune node setup."""
 
 from __future__ import annotations
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import rospy
 
 from entfac_fusion_ros.prune.camera_model import CameraModel
 from entfac_fusion_ros.prune.config import ColorConfig, GateConfig, SyncConfig
@@ -31,6 +32,35 @@ class StartupComponents:
 class PruneStartupBuilder:
     def __init__(self, node: Any):
         self._node = node
+
+    def prepare_runtime_state(self) -> None:
+        node = self._node
+        node._output_topic = rospy.resolve_name("semantic_pointcloud")
+        node.target_T_depth = None
+        node.camera_T_lidar = None
+        node.target_T_lidar = None
+        node._depth_frame = ""
+        node._lidar_frame = ""
+        node._mode_source = "forced" if node.mode in ("depth", "lidar") else "auto"
+        node._mode_detail = "forced via ~mode" if node._mode_source == "forced" else ""
+        if node.mode not in ("depth", "lidar"):
+            node.mode = node._bootstrap.detect_mode()
+
+    def finalize_mode_status(self) -> None:
+        node = self._node
+        node._online_calibration_rpy_rad = np.zeros(3, dtype=np.float64)
+        if node.online_calibration_enable and node.mode != "lidar":
+            node._log.warn(
+                "__init__",
+                "online_calibration_enable=true requires lidar mode; disabling because mode=%s",
+                node.mode,
+            )
+            node.online_calibration_enable = False
+            node._online_calibration_status = f"disabled (mode={node.mode})"
+        elif node.online_calibration_enable:
+            node._online_calibration_status = "active"
+        else:
+            node._online_calibration_status = "disabled"
 
     def build_components(self) -> StartupComponents:
         node = self._node
@@ -82,19 +112,3 @@ class PruneStartupBuilder:
             ),
             frame_inputs=FrameInputPreparer(node),
         )
-
-    def finalize_mode_status(self) -> None:
-        node = self._node
-        node._online_calibration_rpy_rad = np.zeros(3, dtype=np.float64)
-        if node.online_calibration_enable and node.mode != 'lidar':
-            node._log.warn(
-                '__init__',
-                'online_calibration_enable=true requires lidar mode; disabling because mode=%s',
-                node.mode,
-            )
-            node.online_calibration_enable = False
-            node._online_calibration_status = f'disabled (mode={node.mode})'
-        elif node.online_calibration_enable:
-            node._online_calibration_status = 'active'
-        else:
-            node._online_calibration_status = 'disabled'

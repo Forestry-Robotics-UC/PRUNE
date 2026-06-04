@@ -1,4 +1,4 @@
-"""Timestamp and synchronization policy helpers for colored PCL fusion."""
+"""Timestamp and synchronization policy helpers for prune fusion."""
 
 from __future__ import annotations
 
