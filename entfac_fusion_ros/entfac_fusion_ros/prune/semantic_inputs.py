@@ -9,14 +9,14 @@ import numpy as np
 from entfac_fusion_ros.conversions import image_to_numpy, rgb_to_packed_u32
 from entfac_fusion_core.utils.masks import invalid_image_to_mask
 
-from .config import ColorConfig, ProjectionConfig
+from .config import ColorConfig, GateConfig
 from .results import SemanticInputs
 
 
 class SemanticInputParser:
     """Parse semantic images, confidence, and invalid masks."""
 
-    def __init__(self, node: Any, color_config: ColorConfig, projection_config: ProjectionConfig, logger: Any):
+    def __init__(self, node: Any, color_config: ColorConfig, projection_config: GateConfig, logger: Any):
         self._node = node
         self._color = color_config
         self._projection = projection_config

@@ -1,37 +1,24 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-#
-# ENTFAC Sensor Fusion implementation.
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
-# Author: Duda Andrada
-# Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
-# License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
-#
-# Description:
-#   Shared dataclasses for the colored point-cloud node refactor.
-
-"""Shared dataclasses for the colored point-cloud node refactor."""
+"""Shared dataclasses for the prune node refactor."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from entfac_fusion_core.types import SemanticPointCloud
+
 try:
     import rospy
-except ImportError:  # pragma: no cover - optional for non-ROS import paths
+except ImportError:  # pragma: no cover
     rospy = None  # type: ignore[assignment]
 
 
 @dataclass
 class PipelineResult:
-    cloud: SemanticPointCloud
+    cloud: 'SemanticPointCloud'
     stamp: rospy.Time
     frame_id: str
     callback_sec: float
@@ -56,4 +43,4 @@ class SemanticInputs:
     rgb_lut: Optional[np.ndarray]
 
 
-__all__ = ["PipelineResult", "LastPcl", "SemanticInputs"]
+__all__ = ['PipelineResult', 'LastPcl', 'SemanticInputs']

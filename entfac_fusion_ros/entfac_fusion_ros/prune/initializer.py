@@ -10,7 +10,7 @@ import rospy
 from sensor_msgs.msg import CameraInfo
 
 from entfac_fusion_core.utils.validation import require_homogeneous_transform
-from entfac_fusion_ros.colored_pcl.config import (
+from entfac_fusion_ros.prune.config import (
     load_calibration_config,
     load_color_config,
     load_debug_config,

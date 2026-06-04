@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Produce manual-labeling layer sets from overlay PNGs + depth sidecars.
 
-For each frame that has a *_depths.npz sidecar (written by colored_pcl_node
+For each frame that has a *_depths.npz sidecar (written by prune_node
 when save_results is enabled) this tool writes three files into a
 labeling_layers/ sibling directory:
 

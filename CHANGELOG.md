@@ -10,7 +10,7 @@ This project follows Semantic Versioning for release tags.
 - Core API: `entfac_fusion_core.colored_pcl.fuse_depth_semantics` and `entfac_fusion_core.colored_pcl.fuse_lidar_semantics`
 - Core data model: observation/measurement dataclasses in `entfac_fusion_core.types.observations`
 - Core validation utilities in `entfac_fusion_core.utils.validation`
-- ROS API: `entfac_fusion_ros` `colored_pcl_node` topics/params/TF/services
+- ROS API: `entfac_fusion_ros` `prune_node` topics/params/TF/services
 
 ### Highlights
 - Stateless single-frame fusion for depth and LiDAR-projection modes

@@ -1,6 +1,6 @@
 # Parameter reference
 
-Generated from `entfac_fusion_ros/entfac_fusion_ros/colored_pcl_node.py` using:
+Generated from `entfac_fusion_ros/entfac_fusion_ros/prune_node.py` using:
 
 ```bash
 python docs/tools/extract_ros_params.py > docs/manual/parameters.md
@@ -40,7 +40,7 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~imu_cache_size` | `int` | `2000` | IMU cache size for rolling shutter correction. |
 | `~imu_frame` | `str` | `''` | Optional IMU frame override for rolling shutter correction. |
 | `~imu_topic` | `str` | `''` | IMU topic used for rolling shutter correction (sensor_msgs/Imu). |
-| `~include_unlabeled_pts` | `bool` | `false` | If true, keep points outside the camera FOV (label=-1). |
+| `~include_unlabeled` | `bool` | `false` | If true, keep points outside the camera FOV (label=-1). |
 | `~lidar_deskew_enable` | `bool` | `false` | Enable LiDAR deskew using per-point time + IMU. |
 | `~lidar_deskew_imu_samples` | `int` | `1` | Number of IMU samples used across each scan for LiDAR deskew (1 keeps the lightweight single-sample model; values >1 better handle fast motion). |
 | `~lidar_deskew_mode` | `str` | `'rotation'` | Deskew mode: rotation, translation, or both. |

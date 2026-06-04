@@ -170,7 +170,7 @@ df -h /tmp /mnt/t7_shield
 ### Node Crashes
 Review logs:
 ```bash
-cat /tmp/bag_validation_*/colored_pcl_node.log | tail -50
+cat /tmp/bag_validation_*/prune_node.log | tail -50
 ```
 
 ### GPU Out of Memory

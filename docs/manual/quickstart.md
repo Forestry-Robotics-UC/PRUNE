@@ -16,7 +16,7 @@ rosdep update
 rosdep install --from-paths src --ignore-src -r -y
 catkin_make
 source devel/setup.bash
-roslaunch entfac_fusion_ros colored_pcl.launch
+roslaunch entfac_fusion_ros prune.launch
 ```
 
 Node defaults are split into:

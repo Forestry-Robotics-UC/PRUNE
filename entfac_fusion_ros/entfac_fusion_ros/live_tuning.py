@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live Parameter Tuning for colored_pcl_node.
+"""Live Parameter Tuning for prune_node.
 
 Provides unified interface for both dynamic_reconfigure and runtime parameter updates.
 Consolidates all parameter validation and application logic to prevent divergence
@@ -93,7 +93,7 @@ def apply_tuning_params(
     """Apply tuning parameters to node instance.
 
     Args:
-        node_instance: The colored_pcl_node instance to update
+        node_instance: The prune_node instance to update
         get_value: Callable(attr_name, default) that returns validated value or raises
         log_fn: Optional logging callback for change notifications
 

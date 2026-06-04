@@ -24,8 +24,8 @@ Only these interfaces are considered stable.
 ## `entfac_fusion_ros` (ROS1 Noetic)
 
 - Node executable:
-  - `entfac_fusion_ros/scripts/colored_pcl_node.py`
+  - `entfac_fusion_ros/scripts/prune_node.py`
 - Node implementation:
-  - `entfac_fusion_ros/entfac_fusion_ros/colored_pcl_node.py`
+  - `entfac_fusion_ros/entfac_fusion_ros/prune_node.py`
 - ROS contract:
   - `docs/manual/ros_contract.md`

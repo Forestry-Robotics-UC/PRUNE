@@ -43,7 +43,7 @@ python3 /home/ros/ws/src/entfac_fusion/tools/validation/validate_bag_workflow.py
 
 # Stage 3: Prepare ROS environment
 echo ""
-echo "[Stage 3] Starting ROS and colored_pcl_node..."
+echo "[Stage 3] Starting ROS and prune_node..."
 source /home/ros/ws/devel/setup.bash
 
 # Create temporary ROS master
@@ -63,10 +63,10 @@ echo "[Stage 3a] Starting bag replay..."
   wait $ROSBAG_PID
 ) &
 
-# Start colored_pcl_node with debug enabled
-echo "[Stage 3b] Starting colored_pcl_node..."
-rosrun entfac_fusion_ros colored_pcl_node.py _debug:=true \
-    2>&1 | tee -a "$OUTPUT_DIR/colored_pcl_node.log" &
+# Start prune_node with debug enabled
+echo "[Stage 3b] Starting prune_node..."
+rosrun entfac_fusion_ros prune_node.py _debug:=true \
+    2>&1 | tee -a "$OUTPUT_DIR/prune_node.log" &
 NODE_PID=$!
 
 # Let it run for specified duration
@@ -93,4 +93,4 @@ echo "  - topics.txt: Full topic list"
 echo "  - sync_stats.json: Timestamp offset analysis"
 echo "  - validation.log: Validation script output"
 echo "  - rosbag_play.log: Bag replay log"
-echo "  - colored_pcl_node.log: Node output with debug info"
+echo "  - prune_node.log: Node output with debug info"

@@ -6,13 +6,13 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 
-from entfac_fusion_ros.colored_pcl import runtime_builders
-from entfac_fusion_ros.colored_pcl.depth_pipeline import DepthFusionPipeline
-from entfac_fusion_ros.colored_pcl.diagnostics import DiagnosticsOrchestrator
-from entfac_fusion_ros.colored_pcl.lidar_pipeline import LidarFusionPipeline
-from entfac_fusion_ros.colored_pcl.live_tuning import LiveTuningController
-from entfac_fusion_ros.colored_pcl.metrics_reporting import MetricsReporter
-from entfac_fusion_ros.colored_pcl.ros_io import ColoredPclRosIo
+from entfac_fusion_ros.prune import runtime_builders
+from entfac_fusion_ros.prune.depth_pipeline import DepthFusionPipeline
+from entfac_fusion_ros.prune.diagnostics import DiagnosticsOrchestrator
+from entfac_fusion_ros.prune.lidar_pipeline import LidarFusionPipeline
+from entfac_fusion_ros.prune.live_tuning import LiveTuningController
+from entfac_fusion_ros.prune.metrics_reporting import MetricsReporter
+from entfac_fusion_ros.prune.ros_io import PruneRosIo
 from entfac_fusion_ros.lidar_projector import LidarProjector
 
 
@@ -105,7 +105,7 @@ class RuntimeSetup:
 
     def setup_ros_runtime(self, reconfigure_server_cls: Any, reconfigure_config_cls: Any) -> None:
         node = self._node
-        node._ros_io = ColoredPclRosIo(node)
+        node._ros_io = PruneRosIo(node)
         node._live_tuning = LiveTuningController(
             node,
             node._log,
@@ -114,5 +114,4 @@ class RuntimeSetup:
         )
         node._ros_io.setup_publishers()
         node._live_tuning.setup_dynamic_reconfigure()
-        node._ros_io.setup_services()
         node._ros_io.register_subscribers()

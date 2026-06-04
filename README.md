@@ -36,13 +36,13 @@ See `LICENSE`.
 - `entfac_fusion_core/`: catkin Python package; numpy-only, ROS-agnostic core.
   - Python sources live in `entfac_fusion_core/src/entfac_fusion_core/`.
 - `entfac_fusion_ros/`: catkin ROS wrapper package.
-  - `scripts/colored_pcl_node.py`: roslaunch entrypoint (thin wrapper).
-  - `entfac_fusion_ros/colored_pcl_node.py`: node implementation;
+  - `scripts/prune_node.py`: roslaunch entrypoint (thin wrapper).
+  - `entfac_fusion_ros/prune_node.py`: node implementation;
     bridges topics to the core and publishes `sensor_msgs/PointCloud2`.
   - `config/core.yaml`: core parameters (common defaults).
   - `config/expert.yaml`: advanced tuning (IMU/deskew/PLY/extrinsics).
   - Project overrides can be layered on top via launch files (site-specific topics/frames).
-  - `launch/colored_pcl.launch`: generic launch (optional image_transport republish).
+  - `launch/prune.launch`: generic launch (optional image_transport republish).
   - `launch/choupal_colored_pcl.launch`: Choupal bag demo (bag play + TF + republish).
 - `tests/`: pytest coverage for core fusion paths.
 
@@ -66,7 +66,7 @@ pcl = fuse_depth_semantics(
 # pcl.points_xyz, pcl.labels, pcl.confidence
 ```
 
-## ROS Node (`colored_pcl_node.py`)
+## ROS Node (`prune_node.py`)
 - Parameters:
   - `~semantic_topic`: semantic image (label IDs or RGB colors).
   - `~semantic_input_type`: `labels` (single-channel label IDs) or `rgb` (3-channel colors used directly for output coloring).
@@ -82,7 +82,7 @@ pcl = fuse_depth_semantics(
   - Mode auto-detected from `~depth_input_topic` when `~mode` is empty (depth if Image, lidar if PointCloud2).
   - `~core_debug`: enable DEBUG logs from `entfac_fusion_core` (can be noisy).
   - `~target_frame`: frame for output cloud (default `base_link`).
-  - `~include_unlabeled_pts`: keep points outside the camera FOV as label `-1`.
+  - `~include_unlabeled`: keep points outside the camera FOV as label `-1`.
   - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before packing for the PointCloud2 `rgb` field (set to 8/16 for JPEG artifacts; 1 disables).
   - `~colorize_labels`: publish PointCloud2 `rgb` (labels: uses `~color_map` if provided, otherwise a deterministic random palette; rgb: uses semantic image colors).
   - `~random_color_seed`, `~num_labels`: control the deterministic random palette (labels mode only).
@@ -120,11 +120,11 @@ pcl = fuse_depth_semantics(
 ### PLY dump services
 ```bash
 # Save last published cloud once
-rosservice call /colored_pcl_node/save_ply "{}"
+rosservice call /prune_node/save_ply "{}"
 
 # Start/stop continuous recording
-rosservice call /colored_pcl_node/set_ply_recording "data: true"
-rosservice call /colored_pcl_node/set_ply_recording "data: false"
+rosservice call /prune_node/set_ply_recording "data: true"
+rosservice call /prune_node/set_ply_recording "data: false"
 ```
 Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/ply/`).
 
@@ -155,7 +155,7 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
 - This path is heavier than the normal online fusion/debug loop and is intended mainly for rosbag validation runs.
 
 ### Live tuning with `rqt_reconfigure`
-- `colored_pcl_node` exposes the safe runtime tuning knobs through ROS1 `dynamic_reconfigure`.
+- `prune_node` exposes the safe runtime tuning knobs through ROS1 `dynamic_reconfigure`.
 - Live-tunable groups:
   - `Projection`: `projection_*` gating parameters used by LiDAR-to-image transfer.
   - `DebugProjection`: `debug_project_lidar*` overlay controls.
@@ -166,7 +166,7 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
   source devel/setup.bash
   rosrun rqt_reconfigure rqt_reconfigure
   ```
-- In `rqt_reconfigure`, open `/colored_pcl_node` and tune the parameters live while the node is running.
+- In `rqt_reconfigure`, open `/prune_node` and tune the parameters live while the node is running.
 
 ## Extrinsics options
 - Use TF/URDF: provide proper static transforms for camera ↔ depth ↔ target frames.
@@ -233,15 +233,15 @@ pytest -q
 - Build your workspace, source setup, set topics/extrinsics in `entfac_fusion_ros/config/core.yaml` + `entfac_fusion_ros/config/expert.yaml` (and layer any site overrides in launch).
 - Launch (auto-detects depth vs. LiDAR based on the provided topics):
   ```bash
-  roslaunch entfac_fusion_ros colored_pcl.launch
+  roslaunch entfac_fusion_ros prune.launch
   ```
 - Debug startup report + DEBUG logs:
   ```bash
-  roslaunch entfac_fusion_ros colored_pcl.launch debug:=true
+  roslaunch entfac_fusion_ros prune.launch debug:=true
   ```
 - Use file-based intrinsics instead of waiting for a CameraInfo topic:
   ```bash
-  roslaunch entfac_fusion_ros colored_pcl.launch \
+  roslaunch entfac_fusion_ros prune.launch \
     camera_info_txt:=/path/to/camera_info.txt \
     camera_frame:=camera_color_optical_frame
   ```
@@ -270,8 +270,8 @@ pytest -q
 - Avoid setting empty-string params in launch files since they overwrite YAML.
 
 ## Semantic colors
-- Set `colored_pcl_node/semantic_input_type:=labels` when `~semantic_topic` is a single-channel label image (`mono8`, `16UC1`, `32SC1`).
-- Set `colored_pcl_node/semantic_input_type:=rgb` when `~semantic_topic` is a 3/4-channel color image (`rgb8`, `bgr8`, `rgba8`, `bgra8`).
+- Set `prune_node/semantic_input_type:=labels` when `~semantic_topic` is a single-channel label image (`mono8`, `16UC1`, `32SC1`).
+- Set `prune_node/semantic_input_type:=rgb` when `~semantic_topic` is a 3/4-channel color image (`rgb8`, `bgr8`, `rgba8`, `bgra8`).
   - This mode uses the semantic image colors directly for the PointCloud2 `rgb` field (no decoding).
   - The PointCloud2 `label` field is set to “unknown” (`65535`) because no label IDs are provided.
   - If your stream is JPEG-compressed, tune `semantic_color_quantization_step` (8/16) to reduce near-duplicate colors before packing.

@@ -77,7 +77,7 @@ class StartupReporter:
 
     def log_param_report(self) -> None:
         node = self._node
-        node._log.info("_log_param_report", "colored_pcl_node debug report:")
+        node._log.info("_log_param_report", "prune_node debug report:")
         node._log.info(
             "_log_param_report",
             "  source=cli means passed as _param:=...; source=param_server means set via YAML/launch; source=default means unset.",

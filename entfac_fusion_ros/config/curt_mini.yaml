@@ -13,7 +13,7 @@ depth_input_topic: "/ouster/points"
 # Output point-cloud frame after fusion.
 target_frame: "base_link"
 # Keep LiDAR points outside the camera FOV so mapping uses the full scan.
-include_unlabeled_pts: false
+include_unlabeled: false
 # Force the node into LiDAR fusion mode.
 mode: "lidar"
 # Publish RGB values in the output cloud.

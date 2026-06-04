@@ -10,7 +10,7 @@ files into a gimp_layers/ sibling directory:
 For blended-mask overlays (invalid_mask_overlay, depth_edge_overlay) only the
 RGBA layer is written (the blend cannot be reversed without the original mask).
 
-If frame_XXXXXX_depths.npz is present (written by colored_pcl_node when
+If frame_XXXXXX_depths.npz is present (written by prune_node when
 save_results is enabled) two additional files are produced:
 
   frame_XXXXXX_depth_layer.png       RGBA — projected points coloured by

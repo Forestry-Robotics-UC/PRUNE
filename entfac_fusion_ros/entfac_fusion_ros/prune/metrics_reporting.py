@@ -8,7 +8,7 @@ from typing import Any, Optional
 import rospy
 
 from entfac_fusion_ros.experiment_metrics import FrameMetrics, MetricsCsvLogger
-from entfac_fusion_ros.lidar_projector import ProjectionMetrics
+from entfac_fusion_ros.lidar_projector import GateMetrics
 
 
 class MetricsReporter:
@@ -41,7 +41,7 @@ class MetricsReporter:
         pair_accepted: int,
         drop_reason: str,
         num_input_points: int,
-        projection_metrics: ProjectionMetrics,
+        projection_metrics: GateMetrics,
         num_output_points: int,
         runtime_total_ms: float,
         runtime_publish_ms: float,

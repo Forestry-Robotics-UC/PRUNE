@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 CurtMini bag validation workflow:
-  - Replay bag through colored_pcl_node
+  - Replay bag through prune_node
   - Capture sync offset metrics
   - Check projection diagnostics
   - Detect mask edge artifacts (sky bleeding on thin branches)
@@ -120,18 +120,18 @@ def capture_bag_topics(bag_path):
 
 def run_bag_replay_test(bag_path, config_path, output_dir, duration_sec=30):
     """
-    Replay bag through colored_pcl_node and capture diagnostics.
+    Replay bag through prune_node and capture diagnostics.
     
     This is a placeholder that should be run in a ROS environment.
     Returns paths to generated diagnostics.
     """
     logger.info(f"Would replay {bag_path} with config {config_path} for {duration_sec}s")
-    logger.info("This must be run in a ROS/Docker environment with rosbag and colored_pcl_node active")
+    logger.info("This must be run in a ROS/Docker environment with rosbag and prune_node active")
     logger.info(f"Output directory: {output_dir}")
     
     # In practice, this would:
     # 1. Start rosbag play
-    # 2. Start colored_pcl_node with debug_project_lidar=true
+    # 2. Start prune_node with debug_project_lidar=true
     # 3. Record output topic to secondary bag
     # 4. Capture RViz/diagnostic images
     

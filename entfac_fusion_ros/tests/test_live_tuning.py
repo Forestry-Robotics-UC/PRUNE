@@ -6,7 +6,7 @@ from entfac_fusion_ros.live_tuning import apply_tuning_params, TUNING_PARAMS
 
 
 class MockNode:
-    """Mock colored_pcl_node for testing."""
+    """Mock prune_node for testing."""
 
     def __init__(self):
         """Initialize with default tuning parameter values."""

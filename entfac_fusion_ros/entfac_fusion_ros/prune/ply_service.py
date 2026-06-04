@@ -49,7 +49,7 @@ class PlyRecordingService:
     def next_path(self, stamp: rospy.Time) -> Path:
         t_ns = int(stamp.to_nsec()) if hasattr(stamp, "to_nsec") else int(stamp.to_sec() * 1e9)
         self._seq += 1
-        return Path(self._node.ply_output_dir) / f"colored_pcl_{t_ns}_{self._seq:06d}.ply"
+        return Path(self._node.ply_output_dir) / f"prune_{t_ns}_{self._seq:06d}.ply"
 
     def enqueue(self, last: LastPcl) -> bool:
         points_xyz = last.points_xyz

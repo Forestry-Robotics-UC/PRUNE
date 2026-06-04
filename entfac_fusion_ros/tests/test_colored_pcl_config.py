@@ -12,7 +12,7 @@ ROS_SRC = Path(__file__).resolve().parents[2] / "entfac_fusion_ros"
 if str(ROS_SRC) not in sys.path:
     sys.path.insert(0, str(ROS_SRC))
 
-from entfac_fusion_ros.colored_pcl.config import (
+from entfac_fusion_ros.prune.config import (
     load_calibration_config,
     load_color_config,
     load_debug_config,

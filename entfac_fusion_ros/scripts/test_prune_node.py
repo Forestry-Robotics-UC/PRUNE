@@ -16,7 +16,7 @@
 # Repository: ENTFAC-Sensor-Fusion
 #
 # Description:
-#   Minimal ROS integration test for colored_pcl_node (rostest).
+#   Minimal ROS integration test for prune_node (rostest).
 
 import unittest
 
@@ -27,9 +27,9 @@ from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from sensor_msgs import point_cloud2
 
 
-class ColoredPclNodeRosTest(unittest.TestCase):
+class PruneNodeRosTest(unittest.TestCase):
     def setUp(self):
-        rospy.init_node("test_colored_pcl_node", anonymous=True)
+        rospy.init_node("test_prune_node", anonymous=True)
         self._got_pcl = None
         self._pcl_sub = rospy.Subscriber(
             "/semantic_pointcloud", PointCloud2, self._on_pcl, queue_size=1
@@ -122,4 +122,4 @@ class ColoredPclNodeRosTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    rostest.rosrun("entfac_fusion_ros", "test_colored_pcl_node", ColoredPclNodeRosTest)
+    rostest.rosrun("entfac_fusion_ros", "test_prune_node", PruneNodeRosTest)

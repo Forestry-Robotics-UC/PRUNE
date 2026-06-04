@@ -22,7 +22,7 @@ Computes nearest-neighbor timestamp deltas between camera and LiDAR topics to ve
 - `semantic_time_offset_sec: 0.0` (adjust if mean offset is non-zero)
 
 ### Stage 2: Projection Validation
-Replays the bag through colored_pcl_node with debug output enabled.
+Replays the bag through prune_node with debug output enabled.
 
 **Captures:**
 - Projection overlay (LiDAR on camera image)
@@ -72,7 +72,7 @@ cd /tmp/bag_validation_YYYYMMDD_HHMMSS
 cat sync_stats.json | python3 -m json.tool
 
 # Check for projection errors
-grep -i "error\|warning\|fail" colored_pcl_node.log
+grep -i "error\|warning\|fail" prune_node.log
 
 # Review bag topics
 cat bag_info.txt
@@ -163,7 +163,7 @@ source devel/setup.bash
 roscore
 
 # Terminal 2: Start node with debug
-rosrun entfac_fusion_ros colored_pcl_node.py _debug:=true
+rosrun entfac_fusion_ros prune_node.py _debug:=true
 
 # Terminal 3: Replay bag
 rosbag play --clock /mnt/t7_shield/ICNF/ICNF_curt_localization_50hz.bag
@@ -230,7 +230,7 @@ rviz -d <config>  # or rqt_image_view to view projection overlay
 ### Issue: Projection failures (NaN, out-of-bounds points)
 
 **Diagnosis:**
-- colored_pcl_node.log shows reprojection errors
+- prune_node.log shows reprojection errors
 - Output point cloud has many uncolored points
 
 **Root causes:**
@@ -264,7 +264,7 @@ After running the workflow, expect:
 ├── topics.txt                    # Full topic list
 ├── sync_stats.json               # Timestamp offset analysis
 ├── validation.log                # Validation script output
-├── colored_pcl_node.log          # Node debug output
+├── prune_node.log          # Node debug output
 └── rosbag_play.log               # Bag replay log
 ```
 
@@ -317,6 +317,6 @@ After running the workflow, expect:
 
 - [Sensor Fusion README](../README.md#configuration)
 - [Parameter Guide](../docs/manual/parameters.md)
-- [Projection Diagnostics](../docs/manual/architecture.md#colored_pcl_node)
+- [Projection Diagnostics](../docs/manual/architecture.md#prune_node)
 - [ROS Time Synchronization](http://wiki.ros.org/roscpp/Overview/Time)
 

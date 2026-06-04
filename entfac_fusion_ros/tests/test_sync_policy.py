@@ -54,8 +54,8 @@ except ModuleNotFoundError:
     )
     sys.modules["rospy"] = rospy
 
-from entfac_fusion_ros.colored_pcl.config import SyncConfig
-from entfac_fusion_ros.colored_pcl.sync_policy import StampPolicy
+from entfac_fusion_ros.prune.config import SyncConfig
+from entfac_fusion_ros.prune.sync_policy import StampPolicy
 
 
 class MockLogger:

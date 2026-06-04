@@ -1,6 +1,6 @@
 # ROS interface contract
 
-The v1 ROS interface is defined by the `colored_pcl_node` node.
+The v1 ROS interface is defined by the `prune_node` node.
 
 ## Topics
 
@@ -8,7 +8,7 @@ The v1 ROS interface is defined by the `colored_pcl_node` node.
 - `~semantic_topic` (`sensor_msgs/Image`) — required
 - `~camera_info` (`sensor_msgs/CameraInfo`) — optional when `~camera_info_txt` is used
 - `~depth_input_topic` (`sensor_msgs/Image` or `sensor_msgs/PointCloud2`) — recommended (auto-detect)
-- `~depth_topic` (`sensor_msgs/Image`) — deprecated
+- `~depth_input_topic` (`sensor_msgs/Image`) — deprecated
 - `~lidar_topic` (`sensor_msgs/PointCloud2`) — deprecated
 - `~confidence_topic` (`sensor_msgs/Image`) — optional
 - `~projection_invalid_mask_topic` (`sensor_msgs/Image`) — optional, aligned to

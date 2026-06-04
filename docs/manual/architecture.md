@@ -13,8 +13,8 @@
 
 ### `entfac_fusion_ros` (ROS wrappers)
 
-- `scripts/colored_pcl_node.py`: roslaunch entrypoint
-- `entfac_fusion_ros/colored_pcl_node.py`: main ROS node
+- `scripts/prune_node.py`: roslaunch entrypoint
+- `entfac_fusion_ros/prune_node.py`: main ROS node
 - `entfac_fusion_ros/conversions.py`: fast `sensor_msgs` -> NumPy conversion
 - `entfac_fusion_ros/pc2.py`: NumPy -> `PointCloud2` packing
 - `entfac_fusion_ros/ply.py`: async PLY export
@@ -44,7 +44,7 @@
 
 ## Configuration entry points
 
-- **YAML defaults**: `config/core.yaml` + `config/expert.yaml` loaded via `rosparam` under `colored_pcl_node/*`
+- **YAML defaults**: `config/core.yaml` + `config/expert.yaml` loaded via `rosparam` under `prune_node/*`
 - **Launch overrides**: `<param>` overrides YAML if set (avoid empty-string overrides)
 - **Project overrides**: optional site-specific YAML layered after core/expert in launch
 - **Extrinsics**:

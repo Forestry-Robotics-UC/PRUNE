@@ -1,4 +1,4 @@
-# Expert colored_pcl_node tuning
+# Expert prune_node tuning
 rolling_shutter_enable: false  # apply rotation-only rolling shutter correction using IMU
 rolling_shutter_readout_sec: 0.0  # total readout time in seconds (0 disables)
 rolling_shutter_direction: "top_to_bottom"  # top_to_bottom or bottom_to_top

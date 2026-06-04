@@ -3,7 +3,7 @@
 ## Scope
 
 This document describes the online LiDAR-camera misalignment functionality added to
-`colored_pcl_node.py` using only classical methods (no neural networks). The goal is
+`prune_node.py` using only classical methods (no neural networks). The goal is
 continuous calibration health monitoring and conservative online correction under edge
 compute constraints.
 
@@ -107,7 +107,7 @@ Main integration points:
 - Core health estimator:
   `entfac_fusion_core/calibration/online_health.py`
 - ROS update loop and projection correction:
-  `entfac_fusion_ros/colored_pcl_node.py`
+  `entfac_fusion_ros/prune_node.py`
 - Tunable parameters:
   `entfac_fusion_ros/config/expert.yaml`
 

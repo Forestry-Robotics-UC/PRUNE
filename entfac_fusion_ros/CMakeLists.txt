@@ -36,7 +36,7 @@ catkin_package(
 
 catkin_install_python(
   PROGRAMS
-    scripts/colored_pcl_node.py
+    scripts/prune_node.py
     scripts/pose_to_tf.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
@@ -51,5 +51,5 @@ install(DIRECTORY cfg
 
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
-  add_rostest(test/test_colored_pcl_node.test)
+  add_rostest(test/test_prune_node.test)
 endif()

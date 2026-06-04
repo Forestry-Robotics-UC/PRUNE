@@ -35,7 +35,7 @@ from entfac_fusion_core.utils.masks import (
     sample_invalid_mask,
 )
 from entfac_fusion_core.utils.semantics import packed_rgb_to_triplets
-from entfac_fusion_ros.lidar_projection_utils import (
+from entfac_fusion_ros.gate_utils import (
     query_neighborhood_reduce,
 )
 # Copied verbatim from pc2.py — pure numpy, no ROS dependency.
@@ -119,7 +119,7 @@ class ProjectionQualityResult:
 
 
 @dataclass
-class ProjectionMetrics:
+class GateMetrics:
     """Counters and runtimes for one projection frame."""
 
     num_points_in_front: int = 0
@@ -145,7 +145,7 @@ class ProjectionResult:
     """All outputs of a single :meth:`LidarProjector.process_frame` call."""
 
     cloud: SemanticPointCloud
-    metrics: ProjectionMetrics
+    metrics: GateMetrics
     image_shape: Tuple[int, int]
     # FOV-gated points in their original frames (for calibration and debug)
     points_fov: np.ndarray          # LiDAR frame, shape (M, 3)
@@ -391,7 +391,7 @@ class LidarProjector:
     ) -> Tuple[
         SemanticPointCloud,
         Optional[np.ndarray],
-        ProjectionMetrics,
+        GateMetrics,
         Optional[np.ndarray],
         Optional[np.ndarray],
         bool,
@@ -400,7 +400,7 @@ class LidarProjector:
         metrics, depth_map, edge_map, rolling_shutter_active).
         """
         p = self._p
-        metrics = ProjectionMetrics()
+        metrics = GateMetrics()
         metrics.num_points_in_front = int(np.count_nonzero(points_cam_all[:, 2] > 0.0))
         h, w = image_shape
 
@@ -505,11 +505,11 @@ class LidarProjector:
         image_shape: Tuple[int, int],
         rgb_lut: Optional[np.ndarray],
         include_rgb: bool,
-        metrics: ProjectionMetrics,
+        metrics: GateMetrics,
     ) -> Tuple[
         SemanticPointCloud,
         Optional[np.ndarray],
-        ProjectionMetrics,
+        GateMetrics,
         Optional[np.ndarray],
         Optional[np.ndarray],
     ]:
@@ -633,11 +633,11 @@ class LidarProjector:
         target_T_lidar: np.ndarray,
         image_shape: Tuple[int, int],
         include_rgb: bool,
-        metrics: ProjectionMetrics,
+        metrics: GateMetrics,
     ) -> Tuple[
         SemanticPointCloud,
         Optional[np.ndarray],
-        ProjectionMetrics,
+        GateMetrics,
         Optional[np.ndarray],
         Optional[np.ndarray],
     ]:

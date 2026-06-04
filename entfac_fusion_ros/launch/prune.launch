@@ -14,10 +14,10 @@
 
   <rosparam command="load"
             file="$(find entfac_fusion_ros)/config/core.yaml"
-            ns="colored_pcl_node"/>
+            ns="prune_node"/>
   <rosparam command="load"
             file="$(find entfac_fusion_ros)/config/expert.yaml"
-            ns="colored_pcl_node"/>
+            ns="prune_node"/>
 
   <!-- Optional decompression via image_transport (semantic, confidence, depth) -->
   <group if="$(arg use_republish)">
@@ -31,7 +31,7 @@
           args="compressed in:=$(arg confidence_in_topic) raw out:=$(arg confidence_topic)"/>
   </group>
 
-  <node pkg="entfac_fusion_ros" type="colored_pcl_node.py" name="colored_pcl_node" output="screen"
+  <node pkg="entfac_fusion_ros" type="prune_node.py" name="prune_node" output="screen"
         args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')">
     <remap from="semantic_pointcloud" to="$(arg output_topic)"/>
     <param name="camera_info_txt" value="$(arg camera_info_txt)"/>

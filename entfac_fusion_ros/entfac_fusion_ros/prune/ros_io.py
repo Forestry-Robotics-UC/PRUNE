@@ -11,7 +11,7 @@ from std_msgs.msg import Float32
 from std_srvs.srv import SetBool, Trigger
 
 
-class ColoredPclRosIo:
+class PruneRosIo:
     def __init__(self, node: Any):
         self._node = node
 
@@ -44,8 +44,7 @@ class ColoredPclRosIo:
             self._node._debug_calibration_uncertainty_pub = rospy.Publisher(self._node.debug_calibration_uncertainty_topic, Float32, queue_size=1)
 
     def setup_services(self) -> None:
-        self._node._srv_set_record = rospy.Service("~set_ply_recording", SetBool, self._node._srv_set_ply_recording)
-        self._node._srv_save_ply = rospy.Service("~save_ply", Trigger, self._node._srv_save_ply)
+        return
 
     def _configure_rolling_shutter_subscribers(self) -> None:
         self._node._rolling_shutter_status = (

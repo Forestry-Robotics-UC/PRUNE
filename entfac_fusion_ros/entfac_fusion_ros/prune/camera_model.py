@@ -11,7 +11,7 @@ import numpy as np
 import rospy
 from sensor_msgs.msg import CameraInfo
 
-from entfac_fusion_ros.colored_pcl.params import load_camera_info_txt as _load_camera_info_txt_helper
+from entfac_fusion_ros.prune.params import load_camera_info_txt as _load_camera_info_txt_helper
 
 
 @dataclass

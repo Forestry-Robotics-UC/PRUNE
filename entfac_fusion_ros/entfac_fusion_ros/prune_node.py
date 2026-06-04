@@ -131,23 +131,19 @@ for parent in _THIS.parents:
         sys.path.insert(0, str(cand))
         break
 
-from entfac_fusion_ros.colored_pcl.params import coerce_bool as _coerce_bool
-from entfac_fusion_ros.colored_pcl.camera_model import CameraModel
-from entfac_fusion_ros.colored_pcl.bootstrap import StartupBootstrap
-from entfac_fusion_ros.colored_pcl.config import ColorConfig, ProjectionConfig, SyncConfig
-from entfac_fusion_ros.colored_pcl.frame_inputs import FrameInputPreparer
-from entfac_fusion_ros.colored_pcl.initializer import NodeInitializer
-from entfac_fusion_ros.colored_pcl.param_reader import ParamReader
-from entfac_fusion_ros.colored_pcl.ply_service import PlyRecordingService
-from entfac_fusion_ros.colored_pcl.runtime_setup import RuntimeSetup
-from entfac_fusion_ros.colored_pcl.online_calibration_bridge import OnlineCalibrationBridge
-from entfac_fusion_ros.colored_pcl.semantic_inputs import SemanticInputParser
-from entfac_fusion_ros.colored_pcl.startup_reporting import StartupReporter
-from entfac_fusion_ros.colored_pcl.sync_policy import StampPolicy
-from entfac_fusion_ros.colored_pcl.tf_resolver import TransformResolver
-from entfac_fusion_ros.colored_pcl.tracked_reprojection_runtime import TrackedReprojectionRuntime
+from entfac_fusion_ros.prune.params import coerce_bool as _coerce_bool
+from entfac_fusion_ros.prune.camera_model import CameraModel
+from entfac_fusion_ros.prune.bootstrap import StartupBootstrap
+from entfac_fusion_ros.prune.initializer import NodeInitializer
+from entfac_fusion_ros.prune.param_reader import ParamReader
+from entfac_fusion_ros.prune.runtime_setup import RuntimeSetup
+from entfac_fusion_ros.prune.startup_reporting import StartupReporter
+from entfac_fusion_ros.prune.tf_resolver import TransformResolver
 from entfac_fusion_ros.logging_ros import NodeLogger, configure_core_logging
+from entfac_fusion_ros.pc2 import semantic_pointcloud_to_msg
 from entfac_fusion_ros.status import StatusReporter
+from entfac_fusion_ros.prune.startup_builder import PruneStartupBuilder
+from entfac_fusion_ros.prune.results import LastPcl
 
 try:
     from entfac_fusion_ros.cfg import ColoredPclTuningConfig
@@ -163,7 +159,7 @@ def _rosargv_bool(name: str, default: bool = False) -> bool:
     return default
 
 
-class ColoredPclNode:
+class PruneNode:
     """ROS node bridging topics to the numpy fusion core."""
 
     def __init__(self):
@@ -211,6 +207,11 @@ class ColoredPclNode:
             "~semantic_topic",
             "/semantic/labels",
             "Semantic label image topic (sensor_msgs/Image).",
+        )
+        self.include_unlabeled = self._get_param_bool(
+            "~include_unlabeled",
+            False,
+            "If true, keep points outside the camera FoV as unlabeled samples instead of dropping them.",
         )
         self.semantic_input_type = self._get_param_str(
             "~semantic_input_type",
@@ -536,63 +537,16 @@ class ColoredPclNode:
         self._mode_detail = "forced via ~mode" if self._mode_source == "forced" else ""
         if self.mode not in ("depth", "lidar"):
             self.mode = self._bootstrap.detect_mode()
-        self._online_calibration_rpy_rad = np.zeros(3, dtype=np.float64)
-        if self.online_calibration_enable and self.mode != "lidar":
-            self._log.warn(
-                "__init__",
-                "online_calibration_enable=true requires lidar mode; disabling because mode=%s",
-                self.mode,
-            )
-            self.online_calibration_enable = False
-            self._online_calibration_status = f"disabled (mode={self.mode})"
-        elif self.online_calibration_enable:
-            self._online_calibration_status = "active"
-        else:
-            self._online_calibration_status = "disabled"
-        self._stamp_policy = StampPolicy(
-            self,
-            SyncConfig(
-                sync_slop_sec=self.sync_slop_sec,
-                pair_max_dt_sec=self.pair_max_dt_sec,
-                semantic_time_offset_sec=self.semantic_time_offset_sec,
-                sync_queue_size=self.sync_queue_size,
-                cloud_time_offset_sec=self.cloud_time_offset_sec,
-                cloud_stamp_source=self.cloud_stamp_source,
-                stamp_debug_log_period_sec=self.stamp_debug_log_period_sec,
-            ),
-            self._log,
-        )
-        self._stamp_policy.resolve_cloud_stamp_source()
-        self._camera_model = CameraModel(self, self._log)
-        self._camera_model.load()
-        self._ply_service = PlyRecordingService(self, self._log)
-        self._tracked_runtime = TrackedReprojectionRuntime(self)
-        self._calibration_bridge = OnlineCalibrationBridge(self)
-        self._semantic_parser = SemanticInputParser(
-            self,
-            ColorConfig(
-                colorize_labels=self.colorize_labels,
-                color_map=dict(self.color_map) if self.color_map else {},
-                random_color_seed=int(self.random_color_seed),
-                num_labels=int(self.num_labels),
-                semantic_color_quantization_step=int(self.semantic_color_quantization_step),
-            ),
-            ProjectionConfig(
-                projection_patch_size=int(self.projection_patch_size),
-                projection_confidence_min=float(self.projection_confidence_min),
-                projection_invalid_mask_topic=str(self.projection_invalid_mask_topic),
-                projection_invalid_mask_value=int(self.projection_invalid_mask_value),
-                projection_invalid_mask_dilate_px=int(self.projection_invalid_mask_dilate_px),
-                projection_occlusion_epsilon_m=float(self.projection_occlusion_epsilon_m),
-                projection_occlusion_radius_px=int(self.projection_occlusion_radius_px),
-                projection_reject_depth_edges=bool(self.projection_reject_depth_edges),
-                projection_depth_edge_thresh=float(self.projection_depth_edge_thresh),
-                projection_depth_edge_radius_px=int(self.projection_depth_edge_radius_px),
-                downsample_factor=int(self.downsample_factor),
-            ),
-            self._log,
-        )
-        self._frame_inputs = FrameInputPreparer(self)
+        self._startup_builder = PruneStartupBuilder(self)
+        self._startup_builder.finalize_mode_status()
+        startup_components = self._startup_builder.build_components()
+        self._stamp_policy = startup_components.stamp_policy
+        self._camera_model = startup_components.camera_model
+        self._ply_service = startup_components.ply_service
+        self._tracked_runtime = startup_components.tracked_runtime
+        self._calibration_bridge = startup_components.calibration_bridge
+        self._semantic_parser = startup_components.semantic_parser
+        self._frame_inputs = startup_components.frame_inputs
         self._runtime_setup.initialize_runtime_state()
 
         self._runtime_setup.validate_mode_dependent_flags()
@@ -668,20 +622,40 @@ class ColoredPclNode:
             ps.print_stats(10)
             self._log.info("_profile", "%s profile:\n%s", label, s.getvalue())
 
+    def _publish_result(self, result) -> None:
+        include_rgb = bool(result.debug.get("include_rgb", False))
+        rgb_lut = result.debug.get("rgb_lut")
+        rgb_values = result.debug.get("rgb_values")
+        pcl_msg = semantic_pointcloud_to_msg(result.cloud, result.frame_id, result.stamp, colorize_labels=include_rgb, rgb_lut=rgb_lut, rgb_values=rgb_values)
+        publish_t0 = rospy.get_time()
+        self.pcl_pub.publish(pcl_msg)
+        publish_ms = max(0.0, (rospy.get_time() - publish_t0) * 1000.0)
+        self._last_pcl = LastPcl(stamp=result.stamp, points_xyz=result.cloud.points_xyz, labels=result.cloud.labels, confidence=result.cloud.confidence, rgb_packed_float=rgb_values if include_rgb else None)
+        if self._ply_recording:
+            self._ply_service.enqueue(self._last_pcl)
+        self._startup_reporting.emit_status(points=int(result.cloud.points_xyz.shape[0]), callback_sec=result.callback_sec)
+        post_publish = result.debug.get("post_publish")
+        if callable(post_publish):
+            post_publish(publish_ms)
+
     def _depth_callback(self, sem_msg, depth_msg, conf_msg=None, invalid_mask_msg=None):
         with self._maybe_profile("depth_callback"):
-            self._depth_pipeline.process(sem_msg, depth_msg, conf_msg, invalid_mask_msg)
+            result = self._depth_pipeline.process(sem_msg, depth_msg, conf_msg, invalid_mask_msg)
+            if result is not None:
+                self._publish_result(result)
 
     def _lidar_callback(self, sem_msg, lidar_msg, conf_msg=None, invalid_mask_msg=None):
         with self._maybe_profile("lidar_callback"):
-            self._lidar_pipeline.process(sem_msg, lidar_msg, conf_msg, invalid_mask_msg)
+            result = self._lidar_pipeline.process(sem_msg, lidar_msg, conf_msg, invalid_mask_msg)
+            if result is not None:
+                self._publish_result(result)
 
 
 def main():
     import threading
     log_level = rospy.DEBUG if _rosargv_bool("debug", False) else rospy.INFO
-    rospy.init_node("colored_pcl_node", log_level=log_level)
-    ColoredPclNode()
+    rospy.init_node("prune_node", log_level=log_level)
+    PruneNode()
     num_threads = int(rospy.get_param("~spin_threads", 1))
     if num_threads > 1:
         threads = [threading.Thread(target=rospy.spin) for _ in range(num_threads - 1)]

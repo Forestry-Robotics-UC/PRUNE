@@ -34,7 +34,7 @@ If transforms are missing at runtime, the node logs a warning and skips publishi
 All static matrices are **row-major 4×4** lists with 16 elements:
 
 ```yaml
-colored_pcl_node:
+prune_node:
   static_target_T_depth: [1, 0, 0, 0,
                           0, 1, 0, 0,
                           0, 0, 1, 0,

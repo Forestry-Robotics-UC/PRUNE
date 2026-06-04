@@ -5,16 +5,16 @@
 
   <param name="use_sim_time" value="false"/>
 
-  <node pkg="entfac_fusion_ros" type="colored_pcl_node.py" name="colored_pcl_node" output="screen">
+  <node pkg="entfac_fusion_ros" type="prune_node.py" name="prune_node" output="screen">
     <param name="debug" value="false"/>
     <param name="core_debug" value="false"/>
     <param name="mode" value="depth"/>
     <param name="target_frame" value="base_link"/>
     <param name="semantic_topic" value="/test/semantic_labels"/>
     <param name="camera_info" value="/test/camera_info"/>
-    <param name="depth_topic" value="/test/depth"/>
+    <param name="depth_input_topic" value="/test/depth"/>
     <param name="semantic_input_type" value="labels"/>
-    <param name="include_unlabeled_pts" value="false"/>
+    <param name="include_unlabeled" value="false"/>
     <param name="colorize_labels" value="false"/>
     <param name="downsample_factor" value="1"/>
     <param name="depth_scale" value="1.0"/>
@@ -28,7 +28,7 @@
     </rosparam>
   </node>
 
-  <test test-name="test_colored_pcl_node" pkg="entfac_fusion_ros"
-        type="test_colored_pcl_node.py" time-limit="10.0"/>
+  <test test-name="test_prune_node" pkg="entfac_fusion_ros"
+        type="test_prune_node.py" time-limit="10.0"/>
 </launch>
 
