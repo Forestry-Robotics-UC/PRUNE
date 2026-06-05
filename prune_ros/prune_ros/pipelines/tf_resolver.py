@@ -8,7 +8,7 @@ import numpy as np
 import rospy
 import tf2_ros
 
-from prune_ros.runtime import format_matrix, transform_stamped_to_matrix
+from ..runtime.tf_utils import format_matrix, transform_stamped_to_matrix
 
 
 class TransformResolver:

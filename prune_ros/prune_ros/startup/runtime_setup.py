@@ -7,13 +7,13 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 from . import runtime_builders
-from prune_ros.pipelines import DepthFusionPipeline
-from prune_ros.diagnostics import DiagnosticsOrchestrator
-from prune_ros.pipelines import LidarFusionPipeline
-from prune_ros.runtime import LiveTuningController
-from prune_ros.diagnostics import MetricsReporter
-from prune_ros.pipelines import PruneRosIo
-from prune_ros.projection import LidarProjector
+from ..pipelines.depth_pipeline import DepthFusionPipeline
+from ..diagnostics.diagnostics import DiagnosticsOrchestrator
+from ..pipelines.lidar_pipeline import LidarFusionPipeline
+from ..runtime.live_tuning import LiveTuningController
+from ..diagnostics.metrics_reporting import MetricsReporter
+from ..pipelines.ros_io import PruneRosIo
+from ..projection.lidar_projector import LidarProjector
 
 
 class RuntimeSetup:

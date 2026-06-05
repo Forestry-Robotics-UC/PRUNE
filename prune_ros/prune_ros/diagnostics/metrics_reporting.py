@@ -7,8 +7,8 @@ from typing import Any, Optional
 
 import rospy
 
-from prune_ros.diagnostics import FrameMetrics, MetricsCsvLogger
-from prune_ros.projection import GateMetrics
+from .experiment_metrics import FrameMetrics, MetricsCsvLogger
+from ..projection.lidar_projector import GateMetrics
 
 
 class MetricsReporter:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from prune_ros.runtime import DebugPublisher, DebugPublisherParams
-from prune_ros.projection import LidarProjectorParams
+from ..runtime.debug_publisher import DebugPublisher, DebugPublisherParams
+from ..projection.lidar_projector import LidarProjectorParams
 
 
 def build_projector_params(node: Any) -> LidarProjectorParams:

@@ -22,9 +22,9 @@ from prune_ros.config import (
 )
 from .runtime_setup import RuntimeSetup
 from .startup_reporting import StartupReporter
-from prune_ros.pipelines import TransformResolver
-from prune_ros.runtime import StatusReporter
-from prune_ros.runtime import format_matrix
+from ..pipelines.tf_resolver import TransformResolver
+from ..runtime.status import StatusReporter
+from ..runtime.tf_utils import format_matrix
 
 
 class NodeInitializer:

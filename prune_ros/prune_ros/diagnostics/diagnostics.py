@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from prune_ros.runtime import render_status_table
+from ..runtime.status import render_status_table
 
 
 class DiagnosticsOrchestrator:

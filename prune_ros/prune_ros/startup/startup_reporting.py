@@ -7,8 +7,8 @@ from typing import Any, Optional
 import numpy as np
 import rospy
 
-from prune_ros.runtime import render_kv_table
-from prune_ros.runtime import format_matrix
+from ..runtime.status import render_kv_table
+from ..runtime.tf_utils import format_matrix
 
 
 class StartupReporter:

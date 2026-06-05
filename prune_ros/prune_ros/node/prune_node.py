@@ -118,13 +118,13 @@ for parent in _THIS.parents:
         break
 
 from prune_ros.config import coerce_bool as _coerce_bool
-from prune_ros.pipelines import CameraModel
-from prune_ros.startup import NodeInitializer
+from ..pipelines.camera_model import CameraModel
+from ..startup.initializer import NodeInitializer
 from prune_ros.config import ParamReader
-from prune_ros.runtime import NodeLogger, configure_core_logging
-from prune_ros.runtime import semantic_pointcloud_to_msg
-from prune_ros.startup import PruneStartupBuilder
-from prune_ros.pipelines import LastPcl
+from ..runtime.logging_ros import NodeLogger, configure_core_logging
+from ..runtime.pc2 import semantic_pointcloud_to_msg
+from ..startup.startup_builder import PruneStartupBuilder
+from ..pipelines.results import LastPcl
 
 try:
     import prune_ros.cfg.PruneTuningConfig as PruneTuningConfig

@@ -8,7 +8,7 @@ from typing import Any, Optional
 import rospy
 from std_srvs.srv import SetBool, SetBoolResponse, Trigger, TriggerResponse
 
-from prune_ros.runtime import PlyJob, PlyWriterThread
+from ..runtime.ply import PlyJob, PlyWriterThread
 from prune_core.transforms.se3 import transform_points
 
 from .results import LastPcl

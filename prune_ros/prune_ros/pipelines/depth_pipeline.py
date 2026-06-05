@@ -14,7 +14,7 @@ from prune_core.transforms.se3 import transform_points
 from prune_core.types import DepthObservation, SemanticObservation, SemanticPointCloud
 from prune_core.utils.masks import filter_invalid_projection_samples
 from prune_core.utils.validation import flatten_masked
-from prune_ros.runtime import image_to_numpy
+from ..runtime.conversions import image_to_numpy
 
 from .results import PipelineResult
 
@@ -69,7 +69,7 @@ class DepthFusionPipeline:
                         pcl = SemanticPointCloud(points_target, labels_all, conf_flat)
                     rgb_values = colors_packed.astype('<u4', copy=False).view('<f4')
         if include_rgb and rgb_values is None and rgb_lut is not None:
-            from prune_ros.runtime import labels_to_uint16
+            from ..runtime.pc2 import labels_to_uint16
             rgb_values = rgb_lut[labels_to_uint16(pcl.labels)]
         return pcl, rgb_values
 

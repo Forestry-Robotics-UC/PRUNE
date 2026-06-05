@@ -6,7 +6,7 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 
-from prune_ros.runtime import image_to_numpy, rgb_to_packed_u32
+from ..runtime.conversions import image_to_numpy, rgb_to_packed_u32
 from prune_core.utils.masks import invalid_image_to_mask
 
 from prune_ros.config import ColorConfig, GateConfig

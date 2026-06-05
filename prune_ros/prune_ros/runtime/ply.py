@@ -21,7 +21,7 @@ from typing import Optional, Union
 
 import numpy as np
 
-from prune_ros.runtime import labels_to_uint16
+from .pc2 import labels_to_uint16
 
 
 def _packed_u32_to_rgb_u8(packed_u32: np.ndarray) -> np.ndarray:

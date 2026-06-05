@@ -8,14 +8,14 @@ from typing import Any
 import numpy as np
 import rospy
 
-from prune_ros.pipelines import CameraModel
+from ..pipelines.camera_model import CameraModel
 from prune_ros.config import ColorConfig, GateConfig, SyncConfig
-from prune_ros.pipelines import FrameInputPreparer
-from prune_ros.pipelines import OnlineCalibrationBridge
-from prune_ros.pipelines import PlyRecordingService
-from prune_ros.pipelines import SemanticInputParser
-from prune_ros.pipelines import StampPolicy
-from prune_ros.pipelines import TrackedReprojectionRuntime
+from ..pipelines.frame_inputs import FrameInputPreparer
+from ..pipelines.online_calibration_bridge import OnlineCalibrationBridge
+from ..pipelines.ply_service import PlyRecordingService
+from ..pipelines.semantic_inputs import SemanticInputParser
+from ..pipelines.sync_policy import StampPolicy
+from ..pipelines.tracked_reprojection_runtime import TrackedReprojectionRuntime
 
 
 @dataclass
