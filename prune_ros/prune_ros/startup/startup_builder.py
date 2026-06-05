@@ -89,6 +89,7 @@ class PruneStartupBuilder:
         stamp_policy.resolve_cloud_stamp_source()
         camera_model = CameraModel(node, node._log)
         camera_model.load()
+        node._undistort_status = camera_model._undistort_status
         return StartupComponents(
             stamp_policy=stamp_policy,
             camera_model=camera_model,
