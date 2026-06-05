@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>entfac_fusion_core</name>
+  <name>prune_core</name>
   <version>1.0.0</version>
-  <description>ROS-agnostic numpy core for ENTFAC Sensor Fusion.</description>
+  <description>ROS-agnostic numpy core for PRUNE.</description>
 
   <maintainer email="duda.andrada@isr.uc.pt">Duda Andrada</maintainer>
   <license>GPL-3.0</license>

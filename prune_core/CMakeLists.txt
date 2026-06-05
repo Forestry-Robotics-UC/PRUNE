@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(entfac_fusion_core)
+project(prune_core)
 
 find_package(catkin REQUIRED)
 

@@ -1,12 +1,12 @@
 # Parameter reference
 
-Generated from `entfac_fusion_ros/entfac_fusion_ros/prune_node.py` using:
+Generated from `prune_ros/prune_ros/prune_node.py` using:
 
 ```bash
 python docs/tools/extract_ros_params.py > docs/manual/parameters.md
 ```
 
-Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entfac_fusion_ros/config/expert.yaml`, then overridden by launch-time params when set.
+Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/config/expert.yaml`, then overridden by launch-time params when set.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
@@ -21,13 +21,13 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~compat_declared_lidar_T_points` | `list[16]` | `None` | Optional static 4x4 row-major matrix mapping incoming point-data coordinates into the declared LiDAR frame. Applied before deskew/projection. Overrides the built-in ~compat_ouster_sensor_frame transform when provided. |
 | `~compat_ouster_sensor_frame` | `bool` | `false` | Legacy-bag compatibility: treat incoming Ouster PointCloud2 XYZ as sensor-frame points mislabeled as the LiDAR frame and convert them back into the declared LiDAR frame before deskew/projection. |
 | `~confidence_topic` | `str` | `None` | Optional confidence image topic aligned with semantic labels (sensor_msgs/Image). |
-| `~core_debug` | `bool` | `false` | Enable entfac_fusion_core DEBUG logs (can be noisy at 10–30 Hz). |
+| `~core_debug` | `bool` | `false` | Enable prune_core DEBUG logs (can be noisy at 10–30 Hz). |
 | `~debug` | `bool` | `false` | Enable debug parameter report at startup (and DEBUG logs if set via launch arg). |
 | `~debug_project_lidar` | `bool` | `false` | If true (lidar mode), publish a debug image with projected lidar points overlaid. |
 | `~debug_project_lidar_outline_only` | `bool` | `false` | If true, draw projected LiDAR markers as outlines so the RGB image stays visible underneath. |
 | `~debug_project_lidar_radius` | `int` | `0` | Marker radius in pixels for the projected LiDAR debug overlay (0 draws single pixels). |
 | `~debug_project_lidar_stride` | `int` | `5` | Subsample factor for projected LiDAR debug overlay (1 draws every projected point). |
-| `~debug_output_dir` | `str` | `''` | Directory where sampled debug overlays are written (empty uses `<entfac_fusion_ros>/output/debug`). |
+| `~debug_output_dir` | `str` | `''` | Directory where sampled debug overlays are written (empty uses `<prune_ros>/output/debug`). |
 | `~debug_output_stride` | `int` | `20` | Save every Nth debug callback per stream (1 saves every frame). |
 | `~debug_publish_fov_points` | `bool` | `false` | If true (lidar mode), publish only the LiDAR points that passed the camera FOV test as a debug PointCloud2 in the LiDAR frame. |
 | `~debug_range_view` | `bool` | `false` | If true (lidar mode), publish LiDAR depth/edge images, a reprojection heatmap, and an alignment score. |
@@ -76,7 +76,7 @@ Defaults are primarily defined in `entfac_fusion_ros/config/core.yaml` and `entf
 | `~online_calibration_min_sem_edge_density` | `float` | `0.01` | Minimum semantic edge density expected for well-observable frames. |
 | `~online_calibration_step_deg` | `float` | `0.2` | Finite-difference perturbation step in degrees for rotational misalignment estimation. |
 | `~pair_max_dt_sec` | `float` | `0.03` | Hard max allowed |Δt| (seconds) between semantic and geometry; <=0 disables. |
-| `~ply_output_dir` | `str` | `''` | Directory where PLY files are written (empty uses <entfac_fusion_ros>/output/ply). |
+| `~ply_output_dir` | `str` | `''` | Directory where PLY files are written (empty uses <prune_ros>/output/ply). |
 | `~ply_target_frame` | `str` | `''` | Optional TF frame to transform PLY output to (ply_target_frame <- target_frame). Empty means use target_frame. |
 | `~ply_tf_tolerance_sec` | `float` | `0.02` | Max allowed time difference (seconds) when using latest TF for PLY export. |
 | `~ply_tf_use_latest` | `bool` | `false` | When true, fall back to the latest TF for PLY export if exact-time lookup fails. |

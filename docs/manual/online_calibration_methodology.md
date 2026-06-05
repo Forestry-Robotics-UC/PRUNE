@@ -105,11 +105,11 @@ This preserves online behavior while still reacting to gradual extrinsic drift.
 
 Main integration points:
 - Core health estimator:
-  `entfac_fusion_core/calibration/online_health.py`
+  `prune_core/calibration/online_health.py`
 - ROS update loop and projection correction:
-  `entfac_fusion_ros/prune_node.py`
+  `prune_ros/prune_node.py`
 - Tunable parameters:
-  `entfac_fusion_ros/config/expert.yaml`
+  `prune_ros/config/expert.yaml`
 
 Debug topics:
 - `/debug/calibration_health` (`Float32`)

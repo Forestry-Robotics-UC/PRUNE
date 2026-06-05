@@ -1,24 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Adapted from Semantic SLAM (substantially refactored for ENTFAC).
-#
-# Original Author:
-#   Xuan Zhang
-#
-# Subsequent Contributions:
-#   David Russell
-#
-# Upstream reference:
-#   https://github.com/floatlazer/semantic_slam
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
 #   Depth back-projection utilities for creating point clouds from depth images.
@@ -32,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 
-from entfac_fusion_core.utils.validation import ensure_float_matrix
+from prune_core.utils.validation import ensure_float_matrix
 
 LOGGER = logging.getLogger(__name__)
 

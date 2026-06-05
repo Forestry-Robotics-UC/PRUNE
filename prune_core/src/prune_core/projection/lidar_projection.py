@@ -1,24 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Adapted from Semantic SLAM (substantially refactored for ENTFAC).
-#
-# Original Author:
-#   Xuan Zhang
-#
-# Subsequent Contributions:
-#   David Russell
-#
-# Upstream reference:
-#   https://github.com/floatlazer/semantic_slam
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
 #   LiDAR-to-camera projection helpers for sampling semantics from images.
@@ -28,8 +14,8 @@
 import logging
 import numpy as np
 
-from entfac_fusion_core.transforms.se3 import transform_points
-from entfac_fusion_core.utils.validation import (
+from prune_core.transforms.se3 import transform_points
+from prune_core.utils.validation import (
     ensure_float_matrix,
     require_homogeneous_transform,
 )

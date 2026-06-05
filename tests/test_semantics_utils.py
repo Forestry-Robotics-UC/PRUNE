@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# ENTFAC Sensor Fusion implementation.
-#
-# Note:
-#   This file was developed specifically for ENTFAC Sensor Fusion.
-#   Project-level upstream attribution is documented in README.md.
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
 #   Unit tests for semantic utility helpers (labels and palette inspection).
@@ -23,11 +14,11 @@ from pathlib import Path
 
 import numpy as np
 
-CORE_SRC = Path(__file__).resolve().parents[1] / "entfac_fusion_core" / "src"
+CORE_SRC = Path(__file__).resolve().parents[1] / "prune_core" / "src"
 if str(CORE_SRC) not in sys.path:
     sys.path.insert(0, str(CORE_SRC))
 
-from entfac_fusion_core.utils.semantics import (  # noqa: E402
+from prune_core.utils.semantics import (  # noqa: E402
     count_semantic_groups,
     count_unique_colors,
     count_unique_labels,

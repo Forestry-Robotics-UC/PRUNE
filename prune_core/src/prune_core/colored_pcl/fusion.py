@@ -1,24 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Adapted from Semantic SLAM (substantially refactored for ENTFAC).
-#
-# Original Author:
-#   Xuan Zhang
-#
-# Subsequent Contributions:
-#   David Russell
-#
-# Upstream reference:
-#   https://github.com/floatlazer/semantic_slam
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
 #   Single-frame semantic fusion pipelines (depth-based and LiDAR projection).
@@ -30,20 +16,20 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from entfac_fusion_core.projection.depth import depth_to_points
-from entfac_fusion_core.projection.lidar_projection import project_points_to_image
-from entfac_fusion_core.transforms.se3 import transform_points
-from entfac_fusion_core.types.observations import (
+from prune_core.projection.depth import depth_to_points
+from prune_core.projection.lidar_projection import project_points_to_image
+from prune_core.transforms.se3 import transform_points
+from prune_core.types.observations import (
     DepthObservation,
     PointObservation,
     SemanticObservation,
     SemanticPointCloud,
 )
-from entfac_fusion_core.colored_pcl.sampling import (
+from prune_core.colored_pcl.sampling import (
     sample_projected_label_patches,
     sample_projected_rgb_patches,
 )
-from entfac_fusion_core.utils.validation import (
+from prune_core.utils.validation import (
     flatten_masked,
     require_homogeneous_transform,
 )

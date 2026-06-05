@@ -13,7 +13,7 @@ For the full methodology used in this repository, see:
 ``docs/manual/online_calibration_methodology.md``.
 """
 
-from entfac_fusion_core.calibration.online_health import (
+from prune_core.calibration.online_health import (
     CalibrationHealthSnapshot,
     OnlineCalibrationHealth,
 )

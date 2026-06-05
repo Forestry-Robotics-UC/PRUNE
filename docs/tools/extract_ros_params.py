@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# ENTFAC Sensor Fusion implementation.
-#
-# Note:
-#   This file was developed specifically for ENTFAC Sensor Fusion.
-#   Project-level upstream attribution is documented in README.md.
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
 #   Offline parameter extractor for prune_node (used for documentation).
@@ -27,8 +18,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 NODE_PATH = (
     Path(__file__).resolve().parents[2]
-    / "entfac_fusion_ros"
-    / "entfac_fusion_ros"
+    / "prune_ros"
+    / "prune_ros"
     / "prune_node.py"
 )
 

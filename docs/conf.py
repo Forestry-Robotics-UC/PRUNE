@@ -1,22 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# ENTFAC Sensor Fusion implementation.
-#
-# Note:
-#   This file was developed specifically for ENTFAC Sensor Fusion.
-#   Project-level upstream attribution is documented in README.md.
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
-#   Sphinx configuration for ENTFAC Sensor Fusion documentation (GitHub Pages ready).
+#   Sphinx configuration for PRUNE documentation (GitHub Pages ready).
 
 from __future__ import annotations
 
@@ -27,10 +18,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Make core and ROS python packages importable for autodoc.
-sys.path.insert(0, str(PROJECT_ROOT / "entfac_fusion_core" / "src"))
-sys.path.insert(0, str(PROJECT_ROOT / "entfac_fusion_ros" / "src"))
+sys.path.insert(0, str(PROJECT_ROOT / "prune_core" / "src"))
+sys.path.insert(0, str(PROJECT_ROOT / "prune_ros" / "src"))
 
-project = "ENTFAC Sensor Fusion"
+project = "PRUNE"
 author = "Duda Andrada"
 copyright = f"{author}"
 

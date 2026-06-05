@@ -1,4 +1,4 @@
-# ENTFAC Sensor Fusion (ROS Noetic) — v1.0
+# PRUNE (ROS Noetic) — v1.0
 
 This documentation is generated from the v1.0 public API docstrings and a short
 manual focused on interface contracts.
