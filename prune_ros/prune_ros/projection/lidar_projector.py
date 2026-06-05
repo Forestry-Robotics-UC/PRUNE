@@ -1106,12 +1106,12 @@ class LidarProjector:
         cv2.imwrite(str(out_dir / f"{tag}_projected_layer.png"),
                     cv2.cvtColor(proj_rgba, cv2.COLOR_RGBA2BGRA))
 
-        # 3. Depth layer — jet-reversed, sqrt gain, 0-18 m, RGBA
+        # 3. Depth layer — jet-reversed, linear, 0-18 m, RGBA
         if points_selected_cam is not None and points_selected_cam.shape[0] == u.shape[0]:
             z_all = points_selected_cam[:, 2]
             z_b = z_all[in_bounds]
             max_d = float(self._OVERLAY_MAX_DEPTH_M)
-            t = np.sqrt(np.clip(z_b, 0.0, max_d) / max_d)  # sqrt gain
+            t = np.clip(z_b, 0.0, max_d) / max_d
             idx = np.clip(np.round(t * 255).astype(int), 0, 255)
             colors = _JET_REV_LUT[idx]  # (N, 3) RGB
             depth_rgba = np.zeros((h, w, 4), dtype=np.uint8)

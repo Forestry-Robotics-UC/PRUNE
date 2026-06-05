@@ -66,6 +66,8 @@ _GATE_LAYERS: list[tuple[str, tuple[int, int, int]]] = [
 
 _POINT_SUFFIXES = {"projected_overlay", "rejection_overlay"}
 _BLEND_SUFFIXES = {"invalid_mask_overlay", "depth_edge_overlay"}
+# Suffixes produced directly by _maybe_save_overlays (already GIMP-ready RGBA).
+_NATIVE_LAYER_SUFFIXES = {"projected_layer", "depth_layer"}
 
 
 # ---------------------------------------------------------------------------
@@ -295,10 +297,29 @@ def process_file(png: Path, out_dir: Path, *, overwrite: bool) -> None:
 
 
 def process_overlays_dir(overlays_dir: Path, *, overwrite: bool) -> int:
+    import shutil
     pngs = sorted(overlays_dir.glob("*.png"))
     if not pngs:
         return 0
-    out_dir = overlays_dir.parent.parent / f"{overlays_dir.parent.name}_gimp_layers"
+    out_dir = overlays_dir.parent / f"{overlays_dir.name}_gimp_layers"
+
+    # Detect whether the directory uses the native format (separate base + RGBA
+    # layer files already produced by _maybe_save_overlays) or the legacy blended
+    # overlay format that requires layer extraction.
+    native_layers = [
+        p for p in pngs
+        if any(p.stem.endswith(s) for s in _NATIVE_LAYER_SUFFIXES)
+    ]
+    if native_layers:
+        # Native format: copy base PNGs and RGBA layer PNGs as-is.
+        out_dir.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for p in pngs:
+            dst = out_dir / p.name
+            if overwrite or not dst.exists():
+                shutil.copy2(p, dst)
+                copied += 1
+        return copied
 
     # Infer image shape from the first PNG (needed for depth layer canvas size).
     sample_shape: tuple[int, int] | None = None
