@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from prune_ros.projection import TrackedReprojection, TrackedReprojectionParams
+from prune_ros.projection.tracked_reprojection import TrackedReprojection, TrackedReprojectionParams
 
 
 class TrackedReprojectionRuntime:

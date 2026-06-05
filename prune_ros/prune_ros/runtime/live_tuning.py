@@ -3,12 +3,60 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 import rospy
 from sensor_msgs.msg import Image
 
 from prune_ros.config import coerce_bool as _coerce_bool
+
+
+# Shared tuning parameter definition: (attr_name, type_hint, validator_fn)
+TUNING_PARAMS = [
+    ("projection_patch_size", int, lambda v: v >= 1 and (v % 2) == 1),
+    ("projection_confidence_min", float, lambda v: 0.0 <= v <= 1.0),
+    ("projection_occlusion_epsilon_m", float, lambda v: v >= 0.0),
+    ("projection_occlusion_radius_px", int, lambda v: v >= 0),
+    ("projection_reject_depth_edges", bool, lambda v: isinstance(v, bool)),
+    ("projection_depth_edge_thresh", float, lambda v: 0.0 <= v <= 1.0),
+    ("projection_depth_edge_radius_px", int, lambda v: v >= 0),
+    ("debug_project_lidar", bool, lambda v: isinstance(v, bool)),
+    ("debug_project_lidar_stride", int, lambda v: v >= 1),
+    ("debug_project_lidar_radius", int, lambda v: v >= 0),
+    ("debug_project_lidar_outline_only", bool, lambda v: isinstance(v, bool)),
+    ("tracked_reprojection_fb_thresh_px", float, lambda v: v > 0.0),
+    ("tracked_reprojection_depth_edge_thresh", float, lambda v: 0.0 <= v <= 1.0),
+    ("tracked_reprojection_min_image_edge", float, lambda v: 0.0 <= v <= 1.0),
+    ("tracked_reprojection_min_tracks", int, lambda v: v >= 10),
+]
+
+
+def apply_tuning_params(
+    node_instance: Any,
+    get_value: Callable[[str, Any], Any],
+    log_fn: Callable[[str], None] | None = None,
+) -> bool:
+    """Apply validated live-tuning values onto *node_instance*."""
+    changes = []
+
+    for attr_name, _type_hint, validator in TUNING_PARAMS:
+        try:
+            default = getattr(node_instance, attr_name)
+            value = get_value(attr_name, default)
+            if not validator(value):
+                continue
+        except Exception:
+            continue
+
+        current = getattr(node_instance, attr_name)
+        if current != value:
+            setattr(node_instance, attr_name, value)
+            changes.append(f"{attr_name}={value}")
+
+    if changes and log_fn is not None:
+        log_fn("Live tuning update: " + ", ".join(changes))
+
+    return bool(changes)
 
 
 class LiveTuningController:
@@ -42,48 +90,25 @@ class LiveTuningController:
         )
 
     def apply_tuning_params(self, get_value, log_source: str = "") -> bool:
-        changes = []
+        changes_logged = []
 
-        def update(attr: str, default, validator) -> None:
-            try:
-                value = get_value(attr, default)
-                if not validator(value):
-                    return
-            except Exception:  # noqa: BLE001
-                return
-            current = getattr(self._node, attr)
-            if current != value:
-                setattr(self._node, attr, value)
-                changes.append(f"{attr}={value}")
+        def log_fn(message: str) -> None:
+            changes_logged.append(message)
 
-        update("projection_patch_size", self._node.projection_patch_size, lambda v: v >= 1 and (v % 2) == 1)
-        update("projection_confidence_min", self._node.projection_confidence_min, lambda v: 0.0 <= v <= 1.0)
-        update("projection_occlusion_epsilon_m", self._node.projection_occlusion_epsilon_m, lambda v: v >= 0.0)
-        update("projection_occlusion_radius_px", self._node.projection_occlusion_radius_px, lambda v: v >= 0)
-        update("projection_reject_depth_edges", self._node.projection_reject_depth_edges, lambda v: isinstance(v, bool))
-        update("projection_depth_edge_thresh", self._node.projection_depth_edge_thresh, lambda v: 0.0 <= v <= 1.0)
-        update("projection_depth_edge_radius_px", self._node.projection_depth_edge_radius_px, lambda v: v >= 0)
-        update("debug_project_lidar", self._node.debug_project_lidar, lambda v: isinstance(v, bool))
-        update("debug_project_lidar_stride", self._node.debug_project_lidar_stride, lambda v: v >= 1)
-        update("debug_project_lidar_radius", self._node.debug_project_lidar_radius, lambda v: v >= 0)
-        update("debug_project_lidar_outline_only", self._node.debug_project_lidar_outline_only, lambda v: isinstance(v, bool))
-        update("tracked_reprojection_fb_thresh_px", self._node.tracked_reprojection_fb_thresh_px, lambda v: v > 0.0)
-        update("tracked_reprojection_depth_edge_thresh", self._node.tracked_reprojection_depth_edge_thresh, lambda v: 0.0 <= v <= 1.0)
-        update("tracked_reprojection_min_image_edge", self._node.tracked_reprojection_min_image_edge, lambda v: 0.0 <= v <= 1.0)
-        update("tracked_reprojection_min_tracks", self._node.tracked_reprojection_min_tracks, lambda v: v >= 10)
+        changed = apply_tuning_params(self._node, get_value, log_fn if log_source else None)
 
         if self._node.debug_project_lidar and self._node._debug_proj_pub is None:
             self._node._debug_proj_pub = rospy.Publisher(
                 self._node.debug_projected_topic, Image, queue_size=1
             )
 
-        if changes:
+        if changed:
             self._node._projector.update_params(self._node._runtime_builders.build_projector_params(self._node))
             if self._node._debug_pub is not None:
                 self._node._debug_pub.update_params(self._node._runtime_builders.build_debug_pub_params(self._node))
-            if log_source:
-                self._log.info(log_source, "Live tuning update: %s", ", ".join(changes))
-        return bool(changes)
+            if log_source and changes_logged:
+                self._log.info(log_source, "%s", changes_logged[0])
+        return changed
 
     def dynamic_reconfigure_callback(self, config, _level):
         initialized = self._node._dynamic_reconfigure_initialized

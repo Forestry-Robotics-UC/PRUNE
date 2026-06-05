@@ -32,7 +32,7 @@ def main() -> int:
     parser.add_argument("--results-dir", required=True, help="Experiment results root")
     args = parser.parse_args()
 
-    os.environ.setdefault("MPLCONFIGDIR", "/tmp/entfac_matplotlib")
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/prune_matplotlib")
     import matplotlib
 
     matplotlib.use("Agg")

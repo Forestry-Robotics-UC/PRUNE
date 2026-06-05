@@ -16,7 +16,7 @@ from prune_core.utils.masks import filter_invalid_projection_samples
 from prune_core.utils.validation import flatten_masked
 from prune_ros.runtime import image_to_numpy
 
-from prune_ros.pipelines import PipelineResult
+from .results import PipelineResult
 
 
 class DepthFusionPipeline:

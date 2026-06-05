@@ -31,6 +31,7 @@ RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_APT_MIRROR}|g" /etc/apt/
         ros-noetic-rosbag \
         ros-noetic-roslaunch \
         ros-noetic-rviz \
+        python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep (update may require network; run it at runtime if needed)

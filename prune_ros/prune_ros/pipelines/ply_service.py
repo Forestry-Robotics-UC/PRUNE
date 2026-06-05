@@ -11,7 +11,7 @@ from std_srvs.srv import SetBool, SetBoolResponse, Trigger, TriggerResponse
 from prune_ros.runtime import PlyJob, PlyWriterThread
 from prune_core.transforms.se3 import transform_points
 
-from prune_ros.pipelines import LastPcl
+from .results import LastPcl
 
 
 class PlyRecordingService:

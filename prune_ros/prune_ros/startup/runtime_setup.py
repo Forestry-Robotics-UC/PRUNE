@@ -6,7 +6,7 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 
-from prune_ros.startup import runtime_builders
+from . import runtime_builders
 from prune_ros.pipelines import DepthFusionPipeline
 from prune_ros.diagnostics import DiagnosticsOrchestrator
 from prune_ros.pipelines import LidarFusionPipeline

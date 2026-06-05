@@ -10,7 +10,7 @@ from prune_ros.runtime import image_to_numpy, rgb_to_packed_u32
 from prune_core.utils.masks import invalid_image_to_mask
 
 from prune_ros.config import ColorConfig, GateConfig
-from prune_ros.pipelines import SemanticInputs
+from .results import SemanticInputs
 
 
 class SemanticInputParser:

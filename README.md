@@ -185,7 +185,7 @@ Files are written under `~ply_output_dir` (default: `prune_ros/output/ply/`).
 
 ## Docker (core tests)
 ```bash
-docker build -t ros-prune -f Docker/entfac-sensor-fusion-noetic.Dockerfile .
+docker build -t ros-prune -f Docker/prune-noetic.Dockerfile .
 docker run --rm -it ros-prune
 ```
 

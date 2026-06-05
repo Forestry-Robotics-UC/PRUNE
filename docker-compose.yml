@@ -3,7 +3,7 @@
 x-prune-common: &prune-common
   build:
     context: .
-    dockerfile: Docker/entfac-sensor-fusion-noetic.Dockerfile
+    dockerfile: Docker/prune-noetic.Dockerfile
     args:
       USERNAME: ${PRUNE_USER:-ros}
       USER_UID: ${PRUNE_UID:-1000}
@@ -17,7 +17,7 @@ x-prune-common: &prune-common
   tty: true
   volumes:
     # PRUNE source mounted into catkin src.
-    - ${PRUNE_SRC_PATH:-.}:/home/${PRUNE_USER:-ros}/ws/src/entfac_fusion:rw
+    - ${PRUNE_SRC_PATH:-.}:/home/${PRUNE_USER:-ros}/ws/src/prune:rw
     # Optional bags root for host-side datasets.
     - ${BAGS_PATH:-/mnt/t7_shield}:/bags:ro
   cpus: ${PRUNE_CPUS:-8.0}
@@ -44,7 +44,7 @@ services:
     container_name: prune_sensor_fusion_ros_gui
     environment: *prune-x11-env
     volumes:
-      - ${PRUNE_SRC_PATH:-.}:/home/${PRUNE_USER:-ros}/ws/src/entfac_fusion:rw
+      - ${PRUNE_SRC_PATH:-.}:/home/${PRUNE_USER:-ros}/ws/src/prune:rw
       - ${BAGS_PATH:-/mnt/t7_shield}:/bags:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${XAUTHORITY_PATH:-${XAUTHORITY:-${HOME}/.Xauthority}}:/tmp/fruc.xauth:rw

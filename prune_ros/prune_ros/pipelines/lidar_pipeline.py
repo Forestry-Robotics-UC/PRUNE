@@ -15,9 +15,9 @@ from prune_core.types import SemanticPointCloud
 from prune_core.utils.semantics import packed_rgb_to_triplets
 from prune_ros.runtime import pointcloud2_to_xyz, pointcloud2_to_xyz_t
 from prune_ros.runtime import interpolate_imu_msg
-from prune_ros.projection import GateMetrics
+from prune_ros.projection.lidar_projector import GateMetrics
 
-from prune_ros.pipelines import PipelineResult
+from .results import PipelineResult
 
 
 @dataclass

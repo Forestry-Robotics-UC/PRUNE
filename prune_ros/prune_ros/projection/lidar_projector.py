@@ -35,10 +35,8 @@ from prune_core.utils.masks import (
     sample_invalid_mask,
 )
 from prune_core.utils.semantics import packed_rgb_to_triplets
-from prune_ros.projection import (
-    query_neighborhood_reduce,
-)
-from prune_ros.projection import save_frame_overlays
+from .gate_utils import query_neighborhood_reduce
+from .results_overlays import save_frame_overlays
 
 # ---------------------------------------------------------------------------
 # Jet-reversed depth LUT: index 0 = red (near 0 m), index 255 = blue (far).

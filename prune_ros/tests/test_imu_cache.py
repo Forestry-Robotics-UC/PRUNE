@@ -86,11 +86,11 @@ class TestInterpolateImuMsg:
 
     def test_clamp_alpha_to_bounds(self):
         """Clamp interpolation parameter to [0, 1]."""
-        before = self._make_imu(0.0, [0, 0, 0], [0, 0, 0])
-        after = self._make_imu(1.0, [10, 0, 0], [10, 0, 0])
+        before = self._make_imu(1.0, [0, 0, 0], [0, 0, 0])
+        after = self._make_imu(2.0, [10, 0, 0], [10, 0, 0])
 
-        # Query before interval
-        omega, _, _ = interpolate_imu_msg(before, after, rospy.Time(-1.0))
+        # Query before interval while keeping ROS time non-negative
+        omega, _, _ = interpolate_imu_msg(before, after, rospy.Time(0.0))
         np.testing.assert_array_almost_equal(omega, [0, 0, 0])
 
         # Query after interval

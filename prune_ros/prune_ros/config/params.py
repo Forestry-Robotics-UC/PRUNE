@@ -1,4 +1,4 @@
-"""Parameter helpers for the ENTFAC colored point-cloud ROS node."""
+"""Parameter helpers for the PRUNE colored point-cloud ROS node."""
 
 from __future__ import annotations
 

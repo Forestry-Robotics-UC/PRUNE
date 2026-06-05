@@ -10,7 +10,7 @@ import rospy
 from sensor_msgs.msg import CameraInfo
 
 from prune_core.utils.validation import require_homogeneous_transform
-from prune_ros.startup import StartupBootstrap
+from .bootstrap import StartupBootstrap
 from prune_ros.config import (
     load_calibration_config,
     load_color_config,
@@ -20,8 +20,8 @@ from prune_ros.config import (
     load_projection_config,
     load_sync_config,
 )
-from prune_ros.startup import RuntimeSetup
-from prune_ros.startup import StartupReporter
+from .runtime_setup import RuntimeSetup
+from .startup_reporting import StartupReporter
 from prune_ros.pipelines import TransformResolver
 from prune_ros.runtime import StatusReporter
 from prune_ros.runtime import format_matrix
@@ -67,7 +67,7 @@ class NodeInitializer:
         node.perception_invalid_label = node._get_param_int(
             "~perception_invalid_label",
             65535,
-            "Label value from Perception indicating invalid/low-confidence pixels; mapped to -1 (unlabeled) before fusion. ENTFAC-Perception uses 65535 by default.",
+            "Label value from Perception indicating invalid/low-confidence pixels; mapped to -1 (unlabeled) before fusion. The perception stack uses 65535 by default.",
         )
         node.semantic_input_type = node._get_param_str(
             "~semantic_input_type",
