@@ -309,6 +309,7 @@ class LidarProjector:
         cloud_height: int = 0,
         cloud_width: int = 0,
         frame_stamp: float = 0.0,
+        overlay_packed_img: Optional[np.ndarray] = None,
     ) -> ProjectionResult:
         """Project, sample, and quality-gate one LiDAR + semantic frame.
 
@@ -371,7 +372,7 @@ class LidarProjector:
         self._frame_stamp: float = frame_stamp
         self._last_intrinsics: np.ndarray = intrinsics
         self._current_subsample: int = max(1, int(p.depth_map_subsample))
-        self._overlay_packed_img = packed_img
+        self._overlay_packed_img = overlay_packed_img if overlay_packed_img is not None else packed_img
 
         # --- Project + sample + quality mask -----------------------------
         rgb_lut = self._get_rgb_float_lut(labels)
@@ -1083,6 +1084,14 @@ class LidarProjector:
         packed = getattr(self, '_overlay_packed_img', None)
         if packed is not None:
             base = packed_rgb_to_triplets(packed).astype(np.uint8)
+            # When the stashed image is at a higher resolution than the
+            # projection space (e.g. downsample_factor > 1), scale u,v up
+            # so the dots land at the correct full-res pixel positions.
+            img_h, img_w = base.shape[:2]
+            if img_h != h or img_w != w:
+                u = np.round(u * (img_w / w)).astype(np.int32)
+                v = np.round(v * (img_h / h)).astype(np.int32)
+                h, w = img_h, img_w
         else:
             base = np.zeros((h, w, 3), dtype=np.uint8)
         cv2.imwrite(str(out_dir / f"{tag}_base.png"), cv2.cvtColor(base, cv2.COLOR_RGB2BGR))
@@ -1130,6 +1139,13 @@ class LidarProjector:
                                 ] = (*c, 255)
             cv2.imwrite(str(out_dir / f"{tag}_depth_layer.png"),
                         cv2.cvtColor(depth_rgba, cv2.COLOR_RGBA2BGRA))
+
+            # 4. Composite — base RGB with depth dots painted on top
+            composite = base.copy()
+            dot_mask = depth_rgba[:, :, 3] == 255
+            composite[dot_mask] = depth_rgba[dot_mask, :3]
+            cv2.imwrite(str(out_dir / f"{tag}_composite.png"),
+                        cv2.cvtColor(composite, cv2.COLOR_RGB2BGR))
 
     # ------------------------------------------------------------------
     # Depth-map rasterisation (sort-reduce, persistent buffer)

@@ -207,7 +207,7 @@ class LidarFusionPipeline:
             return points
         return transform_points(mat, points)
 
-    def _process_frame(self, *, sem_msg, lidar_msg, labels: Optional[np.ndarray], packed_img: Optional[np.ndarray], confidence: Optional[np.ndarray], projection_invalid_mask: Optional[np.ndarray], rgb_lut: Optional[np.ndarray], include_rgb: bool, intrinsics: np.ndarray, semantic_shape: Tuple[int, int], semantic_debug_type: str, semantic_debug_img: Optional[np.ndarray], camera_T_lidar: np.ndarray, target_T_lidar: np.ndarray) -> _LidarFrameResult:
+    def _process_frame(self, *, sem_msg, lidar_msg, labels: Optional[np.ndarray], packed_img: Optional[np.ndarray], confidence: Optional[np.ndarray], projection_invalid_mask: Optional[np.ndarray], rgb_lut: Optional[np.ndarray], include_rgb: bool, intrinsics: np.ndarray, semantic_shape: Tuple[int, int], semantic_debug_type: str, semantic_debug_img: Optional[np.ndarray], camera_T_lidar: np.ndarray, target_T_lidar: np.ndarray, overlay_packed_img: Optional[np.ndarray] = None) -> _LidarFrameResult:
         lidar_stamp = sem_msg.header.stamp
         if lidar_msg.header.frame_id and not self._node._lidar_frame:
             self._node._lidar_frame = lidar_msg.header.frame_id
@@ -228,7 +228,7 @@ class LidarFusionPipeline:
             self._node._online_calibration_status = self._node._calibration_bridge.status
         rolling_shutter_readout_sec = self._get_readout_sec(sem_msg.header.stamp) if self._node.rolling_shutter_enable else 0.0
         rolling_shutter_omega_cam = self._lookup_imu_omega(sem_msg.header.stamp) if rolling_shutter_readout_sec > 0.0 else None
-        proj_result = self._node._projector.process_frame(points=points, labels=labels, packed_img=packed_img, confidence=confidence, projection_invalid_mask=projection_invalid_mask, intrinsics=intrinsics, camera_T_lidar=corrected_camera_T_lidar, target_T_lidar=target_T_lidar, semantic_shape=semantic_shape, include_rgb=include_rgb, rolling_shutter_omega_cam=rolling_shutter_omega_cam, rolling_shutter_readout_sec=rolling_shutter_readout_sec, cloud_height=int(lidar_msg.height), cloud_width=int(lidar_msg.width), frame_stamp=lidar_msg.header.stamp.to_sec())
+        proj_result = self._node._projector.process_frame(points=points, labels=labels, packed_img=packed_img, confidence=confidence, projection_invalid_mask=projection_invalid_mask, intrinsics=intrinsics, camera_T_lidar=corrected_camera_T_lidar, target_T_lidar=target_T_lidar, semantic_shape=semantic_shape, include_rgb=include_rgb, rolling_shutter_omega_cam=rolling_shutter_omega_cam, rolling_shutter_readout_sec=rolling_shutter_readout_sec, cloud_height=int(lidar_msg.height), cloud_width=int(lidar_msg.width), frame_stamp=lidar_msg.header.stamp.to_sec(), overlay_packed_img=overlay_packed_img)
         if proj_result.rolling_shutter_active:
             self._node._rolling_shutter_status = 'active'
         elif self._node.rolling_shutter_enable:
@@ -291,6 +291,6 @@ class LidarFusionPipeline:
             self._node._metrics_reporter.write_lidar_metrics(frame_index=frame_index, sem_msg=sem_msg, lidar_msg=lidar_msg, pair_dt_sec=pair_dt_sec, pair_accepted=0, drop_reason='missing_tf', num_input_points=0, projection_metrics=GateMetrics(), num_output_points=0, runtime_total_ms=1000.0 * (time.perf_counter() - t0), runtime_publish_ms=0.0)
             return None
         camera_T_lidar, target_T_lidar = transforms
-        labels, packed_img, confidence, projection_invalid_mask, rgb_lut, include_rgb, intrinsics, semantic_shape, semantic_debug_type, semantic_debug_img = self._node._frame_inputs.prepare(sem_msg, conf_msg, invalid_mask_msg, '_lidar_callback')
-        lidar_result = self._process_frame(sem_msg=sem_msg, lidar_msg=lidar_msg, labels=labels, packed_img=packed_img, confidence=confidence, projection_invalid_mask=projection_invalid_mask, rgb_lut=rgb_lut, include_rgb=include_rgb, intrinsics=intrinsics, semantic_shape=semantic_shape, semantic_debug_type=semantic_debug_type, semantic_debug_img=semantic_debug_img, camera_T_lidar=camera_T_lidar, target_T_lidar=target_T_lidar)
+        labels, packed_img, confidence, projection_invalid_mask, rgb_lut, include_rgb, intrinsics, semantic_shape, semantic_debug_type, semantic_debug_img, overlay_packed_img = self._node._frame_inputs.prepare(sem_msg, conf_msg, invalid_mask_msg, '_lidar_callback')
+        lidar_result = self._process_frame(sem_msg=sem_msg, lidar_msg=lidar_msg, labels=labels, packed_img=packed_img, confidence=confidence, projection_invalid_mask=projection_invalid_mask, rgb_lut=rgb_lut, include_rgb=include_rgb, intrinsics=intrinsics, semantic_shape=semantic_shape, semantic_debug_type=semantic_debug_type, semantic_debug_img=semantic_debug_img, camera_T_lidar=camera_T_lidar, target_T_lidar=target_T_lidar, overlay_packed_img=overlay_packed_img)
         return self._build_result(lidar_result=lidar_result, semantic_debug_img=semantic_debug_img, semantic_debug_type=semantic_debug_type, intrinsics=intrinsics, stamp=stamp, sem_msg=sem_msg, lidar_msg=lidar_msg, t0=t0, frame_index=frame_index, pair_dt_sec=pair_dt_sec, rgb_lut=rgb_lut, include_rgb=include_rgb)

@@ -57,6 +57,9 @@ class FrameInputPreparer:
         if semantic_debug_img is None:
             raise ValueError("semantic input could not be prepared")
 
+        # Stash full-res packed_img before downsampling (used for full-res overlay).
+        overlay_packed_img = packed_img
+
         if self._node.downsample_factor > 1:
             factor = self._node.downsample_factor
             if labels is not None:
@@ -70,6 +73,7 @@ class FrameInputPreparer:
             intrinsics = self.scale_intrinsics(self._node.intrinsics, factor)
         else:
             intrinsics = self._node.intrinsics
+            overlay_packed_img = None  # no upscaling needed; projector uses packed_img
 
         semantic_shape = labels.shape if labels is not None else packed_img.shape[:2]
         semantic_debug_img = labels if labels is not None else packed_img
@@ -87,4 +91,5 @@ class FrameInputPreparer:
             semantic_shape,
             semantic_debug_type,
             semantic_debug_img,
+            overlay_packed_img,
         )
