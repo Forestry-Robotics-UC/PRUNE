@@ -27,6 +27,7 @@ class PlyRecordingService:
         Path(self._node.ply_output_dir).mkdir(parents=True, exist_ok=True)
         self._recording = bool(self._node.ply_recording_enable)
         if self._recording:
+            self._node._ply_recording = True
             self._writer.start()
             self._log.info("_setup_ply_runtime", "PLY recording enabled at startup (output_dir=%s)", self._node.ply_output_dir)
         self._node._srv_set_record = rospy.Service("~set_ply_recording", SetBool, self.handle_set_recording)
@@ -34,6 +35,7 @@ class PlyRecordingService:
 
     def set_recording(self, enable: bool) -> None:
         self._recording = bool(enable)
+        self._node._ply_recording = self._recording
         if self._recording:
             self._writer.start()
 

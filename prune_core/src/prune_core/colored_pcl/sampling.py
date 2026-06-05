@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# ENTFAC Sensor Fusion implementation.
-#
-# Modified by:
-#   Duda Andrada (ENTFAC Sensor Fusion)
-#
 # Author: Duda Andrada
 # Maintainer: Duda Andrada <duda.andrada@isr.uc.pt>
 # License: GNU General Public License v3.0 (GPL-3.0)
-# Repository: ENTFAC-Sensor-Fusion
+# Repository: PRUNE
 #
 # Description:
 #   Shared projected-patch sampling helpers for semantic fusion.
@@ -22,7 +17,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from entfac_fusion_core.utils.semantics import packed_rgb_to_triplets
+from prune_core.utils.semantics import packed_rgb_to_triplets
 
 
 def _normalize_patch_size(patch_size: int) -> int:
@@ -206,8 +201,23 @@ def sample_projected_rgb_patches(
         confidence=confidence,
     )
     rgb_triplets = packed_rgb_to_triplets(samples).astype(np.float32, copy=False)
-    masked = np.where(valid[:, :, None], rgb_triplets, np.nan)
-    median_rgb = np.nanmedian(masked, axis=1)
+
+    # Fast path: use partition-based median for fully-valid patches (no NaN overhead).
+    # Points within patch_radius pixels of the image border have partial patches (~3%
+    # of projected points at typical resolutions); those use nanmedian as fallback.
+    n = rgb_triplets.shape[0]
+    k = (patch_size * patch_size) // 2
+    median_rgb = np.empty((n, 3), dtype=np.float32)
+    all_valid = valid.all(axis=1)
+    fv_idx = np.nonzero(all_valid)[0]
+    if fv_idx.size:
+        part = np.partition(rgb_triplets[fv_idx], k, axis=1)
+        median_rgb[fv_idx] = part[:, k, :]
+    pv_idx = np.nonzero(~all_valid)[0]
+    if pv_idx.size:
+        masked = np.where(valid[pv_idx, :, None], rgb_triplets[pv_idx], np.nan)
+        median_rgb[pv_idx] = np.nan_to_num(np.nanmedian(masked, axis=1), nan=0.0)
+
     median_rgb = np.nan_to_num(median_rgb, nan=0.0)
     rgb_u8 = np.clip(np.rint(median_rgb), 0.0, 255.0).astype(np.uint8, copy=False)
     packed = (
