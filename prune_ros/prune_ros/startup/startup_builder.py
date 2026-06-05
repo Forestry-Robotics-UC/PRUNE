@@ -28,6 +28,15 @@ class StartupComponents:
     semantic_parser: SemanticInputParser
     frame_inputs: FrameInputPreparer
 
+    def apply_to(self, node: Any) -> None:
+        node._stamp_policy = self.stamp_policy
+        node._camera_model = self.camera_model
+        node._ply_service = self.ply_service
+        node._tracked_runtime = self.tracked_runtime
+        node._calibration_bridge = self.calibration_bridge
+        node._semantic_parser = self.semantic_parser
+        node._frame_inputs = self.frame_inputs
+
 
 class PruneStartupBuilder:
     def __init__(self, node: Any):

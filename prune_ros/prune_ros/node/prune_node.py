@@ -148,16 +148,6 @@ class PruneNode:
         self._node_name = rospy.get_name().lstrip("/")
         self._log = NodeLogger(self._node_name)
         self._params = ParamReader(self)
-        self._record_param = self._params.record_param
-        self._get_param = self._params.get_param
-        self._get_param_str = self._params.get_param_str
-        self._get_param_bool = self._params.get_param_bool
-        self._get_param_int = self._params.get_param_int
-        self._get_param_float = self._params.get_param_float
-        self._get_matrix_param = self._params.get_matrix_param
-        self._get_color_map = self._params.get_color_map
-        self._apply_loaded_config = self._params.apply_loaded_config
-        self._load_camera_info_txt = self._params.load_camera_info_txt
 
         self._initializer = NodeInitializer(self)
         self._initializer.load_initial_params()
@@ -172,13 +162,7 @@ class PruneNode:
         self._startup_builder.prepare_runtime_state()
         self._startup_builder.finalize_mode_status()
         startup_components = self._startup_builder.build_components()
-        self._stamp_policy = startup_components.stamp_policy
-        self._camera_model = startup_components.camera_model
-        self._ply_service = startup_components.ply_service
-        self._tracked_runtime = startup_components.tracked_runtime
-        self._calibration_bridge = startup_components.calibration_bridge
-        self._semantic_parser = startup_components.semantic_parser
-        self._frame_inputs = startup_components.frame_inputs
+        startup_components.apply_to(self)
         self._runtime_setup.initialize_runtime_state()
 
         self._runtime_setup.validate_mode_dependent_flags()
@@ -205,6 +189,40 @@ class PruneNode:
         )
         if self.debug:
             self._startup_reporting.log_param_report()
+
+    def _record_param(self, name, value, source, description):
+        return self._params.record_param(name, value, source, description)
+
+    def _get_param(self, name, default, description, *, allow_empty=False):
+        return self._params.get_param(
+            name, default, description, allow_empty=allow_empty
+        )
+
+    def _get_param_str(self, name, default, description, *, allow_empty=False):
+        return self._params.get_param_str(
+            name, default, description, allow_empty=allow_empty
+        )
+
+    def _get_param_bool(self, name, default, description):
+        return self._params.get_param_bool(name, default, description)
+
+    def _get_param_int(self, name, default, description):
+        return self._params.get_param_int(name, default, description)
+
+    def _get_param_float(self, name, default, description):
+        return self._params.get_param_float(name, default, description)
+
+    def _get_matrix_param(self, name, description):
+        return self._params.get_matrix_param(name, description)
+
+    def _get_color_map(self, name, description):
+        return self._params.get_color_map(name, description)
+
+    def _apply_loaded_config(self, config) -> None:
+        self._params.apply_loaded_config(config)
+
+    def _load_camera_info_txt(self, txt_path):
+        return self._params.load_camera_info_txt(txt_path)
 
     def _metadata_callback(self, msg) -> None:
         try:
