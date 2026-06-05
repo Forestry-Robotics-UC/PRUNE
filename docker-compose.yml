@@ -1,31 +1,30 @@
-# ENTFAC Sensor Fusion - General compose (non dataset-specific).
-# For CurtMini/Apparatus dataset workflows, use docker-compose.forestsphere.yml.
+# PRUNE - General compose for non dataset-specific ROS development.
 
-x-entfac-common: &entfac-common
+x-prune-common: &prune-common
   build:
     context: .
     dockerfile: Docker/entfac-sensor-fusion-noetic.Dockerfile
     args:
-      USERNAME: ${ENTFAC_USER:-ros}
-      USER_UID: ${ENTFAC_UID:-1000}
-      USER_GID: ${ENTFAC_GID:-1000}
+      USERNAME: ${PRUNE_USER:-ros}
+      USER_UID: ${PRUNE_UID:-1000}
+      USER_GID: ${PRUNE_GID:-1000}
       UBUNTU_APT_MIRROR: ${UBUNTU_APT_MIRROR:-http://de.archive.ubuntu.com/ubuntu}
-  image: ${ENTFAC_IMAGE:-ros-entfac:latest}
-  user: "${ENTFAC_USER:-ros}"
-  working_dir: /home/${ENTFAC_USER:-ros}/ws
+  image: ${PRUNE_IMAGE:-ros-prune:latest}
+  user: "${PRUNE_USER:-ros}"
+  working_dir: /home/${PRUNE_USER:-ros}/ws
   network_mode: host
   stdin_open: true
   tty: true
   volumes:
-    # ENTFAC source mounted into catkin src.
-    - ${ENTFAC_SRC_PATH:-.}:/home/${ENTFAC_USER:-ros}/ws/src/entfac_fusion:rw
+    # PRUNE source mounted into catkin src.
+    - ${PRUNE_SRC_PATH:-.}:/home/${PRUNE_USER:-ros}/ws/src/entfac_fusion:rw
     # Optional bags root for host-side datasets.
     - ${BAGS_PATH:-/mnt/t7_shield}:/bags:ro
-  cpus: ${ENTFAC_CPUS:-8.0}
-  mem_limit: ${ENTFAC_MEM_LIMIT:-12g}
-  memswap_limit: ${ENTFAC_MEMSWAP_LIMIT:-12g}
+  cpus: ${PRUNE_CPUS:-8.0}
+  mem_limit: ${PRUNE_MEM_LIMIT:-12g}
+  memswap_limit: ${PRUNE_MEMSWAP_LIMIT:-12g}
 
-x-entfac-x11-env: &entfac-x11-env
+x-prune-x11-env: &prune-x11-env
   DISPLAY: ${DISPLAY:-:0}
   XDG_RUNTIME_DIR: /tmp
   QT_X11_NO_MITSHM: "1"
@@ -34,18 +33,18 @@ x-entfac-x11-env: &entfac-x11-env
 services:
   # CLI-oriented shell for generic ROS work.
   sensor-fusion-ros:
-    <<: *entfac-common
-    container_name: entfac_sensor_fusion_ros
+    <<: *prune-common
+    container_name: prune_sensor_fusion_ros
     command: ["/bin/bash"]
 
   # GUI shell (RViz/rqt) with host X11 forwarding.
   # Host prereq per session: xhost +si:localuser:$(whoami)
   sensor-fusion-ros-gui:
-    <<: *entfac-common
-    container_name: entfac_sensor_fusion_ros_gui
-    environment: *entfac-x11-env
+    <<: *prune-common
+    container_name: prune_sensor_fusion_ros_gui
+    environment: *prune-x11-env
     volumes:
-      - ${ENTFAC_SRC_PATH:-.}:/home/${ENTFAC_USER:-ros}/ws/src/entfac_fusion:rw
+      - ${PRUNE_SRC_PATH:-.}:/home/${PRUNE_USER:-ros}/ws/src/entfac_fusion:rw
       - ${BAGS_PATH:-/mnt/t7_shield}:/bags:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${XAUTHORITY_PATH:-${XAUTHORITY:-${HOME}/.Xauthority}}:/tmp/fruc.xauth:rw

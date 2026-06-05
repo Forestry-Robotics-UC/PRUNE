@@ -1,12 +1,12 @@
-# <img src="docs/assets/fruc_logo.png" width="150" alt="FRUC logo"/>  ENTFAC Sensor Fusion 
+# <img src="docs/assets/fruc_logo.png" width="150" alt="FRUC logo"/>  PRUNE 
 
-Stateless sensor fusion module for ENTFAC that turns single-frame semantic
+Stateless sensor fusion module for PRUNE that turns single-frame semantic
 perception outputs plus geometry into semantic point cloud measurements. Mapping
 and temporal fusion live elsewhere.
 
 ## Attribution and Licensing
 
-ENTFAC Sensor Fusion is a derivative work based on the open-source **Semantic SLAM**
+PRUNE is a derivative work based on the open-source **Semantic SLAM**
 implementation originally developed by **Xuan Zhang**, and later extended by
 **David Russell**, particularly in the lidar-to-camera projection and semantic
 point cloud generation components.
@@ -15,7 +15,7 @@ Original project:
 https://github.com/floatlazer/semantic_slam
 
 Significant modifications, refactoring, and architectural changes have been made
-to support the ENTFAC modular sensor fusion framework, including ROS1 integration,
+to support the PRUNE modular sensor fusion framework, including ROS1 integration,
 semantic fusion strategies, and system-level reorganization.
 
 This project is distributed under the **GNU General Public License v3.0 (GPL-3.0)**.
@@ -23,21 +23,21 @@ See `LICENSE`.
 
 ## Responsibilities
 - Input: semantic labels (+ optional confidence), depth image or LiDAR points,
-  camera intrinsics, frame transforms, and optional invalid masks from ENTFAC
+  camera intrinsics, frame transforms, and optional invalid masks from PRUNE
   Perception.
 - Output: `SemanticPointCloud` in a target frame with per-point label and optional
   confidence. No map state is stored.
 - Modes: depth-based fusion (RGB-D) and LiDAR projection fusion (LiDAR + camera).
-- Boundary: neural inference and GPU model execution belong in ENTFAC
+- Boundary: neural inference and GPU model execution belong in the perception stack
   Perception; Sensor Fusion remains model-agnostic and consumes already-published
   image products.
 
 ## Repository Layout
-- `entfac_fusion_core/`: catkin Python package; numpy-only, ROS-agnostic core.
-  - Python sources live in `entfac_fusion_core/src/entfac_fusion_core/`.
-- `entfac_fusion_ros/`: catkin ROS wrapper package.
+- `prune_core/`: catkin Python package; numpy-only, ROS-agnostic core.
+  - Python sources live in `prune_core/src/prune_core/`.
+- `prune_ros/`: catkin ROS wrapper package.
   - `scripts/prune_node.py`: roslaunch entrypoint (thin wrapper).
-  - `entfac_fusion_ros/prune_node.py`: node implementation;
+  - `prune_ros/prune_node.py`: node implementation;
     bridges topics to the core and publishes `sensor_msgs/PointCloud2`.
   - `config/core.yaml`: core parameters (common defaults).
   - `config/expert.yaml`: advanced tuning (IMU/deskew/PLY/extrinsics).
@@ -48,8 +48,8 @@ See `LICENSE`.
 
 ## Core Usage (numpy)
 ```python
-from entfac_fusion_core.colored_pcl import fuse_depth_semantics
-from entfac_fusion_core.types import SemanticObservation, DepthObservation
+from prune_core.colored_pcl import fuse_depth_semantics
+from prune_core.types import SemanticObservation, DepthObservation
 import numpy as np
 
 labels = np.zeros((480, 640), dtype=np.int32)
@@ -80,7 +80,7 @@ pcl = fuse_depth_semantics(
   - `~depth_input_topic`: geometry input topic; set to either a depth `sensor_msgs/Image` or a `sensor_msgs/PointCloud2` (LiDAR). The node auto-detects which and selects the fusion mode.
   - `~mode`: force fusion mode (`depth` or `lidar`); empty enables auto-detect.
   - Mode auto-detected from `~depth_input_topic` when `~mode` is empty (depth if Image, lidar if PointCloud2).
-  - `~core_debug`: enable DEBUG logs from `entfac_fusion_core` (can be noisy).
+  - `~core_debug`: enable DEBUG logs from `prune_core` (can be noisy).
   - `~target_frame`: frame for output cloud (default `base_link`).
   - `~include_unlabeled`: keep points outside the camera FOV as label `-1`.
   - `~semantic_color_quantization_step`: quantize RGB/BGR semantic images before packing for the PointCloud2 `rgb` field (set to 8/16 for JPEG artifacts; 1 disables).
@@ -89,7 +89,7 @@ pcl = fuse_depth_semantics(
   - `~downsample_factor`: integer >=1 to subsample labels/depth for CPU-bound/ARM.
   - `~sync_slop_sec`, `~pair_max_dt_sec`, `~sync_queue_size`: ApproximateTimeSynchronizer slop/queue and hard max |Δt| for pairing.
   - `~debug_project_lidar`: publish a debug image with projected lidar points (topic `/debug/lidar_projection`, depth coloring, stride=5).
-  - `~debug_output_dir`, `~debug_output_stride`: save sampled debug overlays as PNGs under `entfac_fusion_ros/output/debug/` by default.
+  - `~debug_output_dir`, `~debug_output_stride`: save sampled debug overlays as PNGs under `prune_ros/output/debug/` by default.
   - `~online_calibration_enable`: enable lightweight online LiDAR-camera misalignment estimation (classical, no neural networks), with health and uncertainty outputs.
   - `~online_calibration_every_n_frames`, `~online_calibration_max_points`: control compute budget for online calibration updates.
   - `~online_calibration_step_deg`, `~online_calibration_learning_rate`, `~online_calibration_max_correction_deg`: rotational correction update behavior and safety clamps.
@@ -126,7 +126,7 @@ rosservice call /prune_node/save_ply "{}"
 rosservice call /prune_node/set_ply_recording "data: true"
 rosservice call /prune_node/set_ply_recording "data: false"
 ```
-Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/ply/`).
+Files are written under `~ply_output_dir` (default: `prune_ros/output/ply/`).
 
 ### Online calibration health (edge/KISS)
 - For LiDAR mode, the node can run a low-rate rotational correction loop using semantic-vs-depth edge alignment.
@@ -135,8 +135,8 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
   - `/debug/calibration_uncertainty` (`std_msgs/Float32`, 0..1 where lower is better)
 - Keep correction disabled until bag metrics show stable observability and low reprojection error.
 
-### ENTFAC Perception bridge
-- Preferred products from ENTFAC Perception:
+### PRUNE Perception bridge
+- Preferred products from PRUNE Perception:
   - label IDs or RGB semantic images on `~semantic_topic`
   - per-pixel confidence on `~confidence_topic`
   - optional invalid mask on `~projection_invalid_mask_topic`
@@ -162,7 +162,7 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
   - `TrackedReprojection`: `tracked_reprojection_fb_thresh_px`, `tracked_reprojection_depth_edge_thresh`, `tracked_reprojection_min_image_edge`, `tracked_reprojection_min_tracks`.
 - Rebuild the catkin workspace after adding the generated dynamic-reconfigure config:
   ```bash
-  catkin build entfac_fusion_ros
+  catkin build prune_ros
   source devel/setup.bash
   rosrun rqt_reconfigure rqt_reconfigure
   ```
@@ -174,19 +174,19 @@ Files are written under `~ply_output_dir` (default: `entfac_fusion_ros/output/pl
   - `static_target_T_depth` (depth frame → target frame)
   - `static_camera_T_lidar` (lidar frame → camera frame)
   - `static_target_T_lidar` (lidar frame → target frame)
-  See `entfac_fusion_ros/config/core.yaml` and `entfac_fusion_ros/config/expert.yaml` for layout.
+  See `prune_ros/config/core.yaml` and `prune_ros/config/expert.yaml` for layout.
 
 ## Dependencies
 - Python (core/tests): `numpy`, `pytest` (see `requirements.txt`).
-- ROS (wrappers): see `entfac_fusion_core/package.xml` and `entfac_fusion_ros/package.xml`.
+- ROS (wrappers): see `prune_core/package.xml` and `prune_ros/package.xml`.
   Recommended:
   - `rosdep update`
   - `rosdep install --from-paths src --ignore-src -r -y`
 
 ## Docker (core tests)
 ```bash
-docker build -t ros-entfac -f Docker/entfac-sensor-fusion-noetic.Dockerfile .
-docker run --rm -it ros-entfac
+docker build -t ros-prune -f Docker/entfac-sensor-fusion-noetic.Dockerfile .
+docker run --rm -it ros-prune
 ```
 
 ## Docker (ROS)
@@ -194,7 +194,6 @@ docker run --rm -it ros-entfac
   ```bash
   docker compose -f dataset-compose.yml run --rm dataset-processing
   ```
-- ForestSphere-specific compose, URDFs, launch scripts, and dataset workflow are documented in `forestsphere.md`.
 
 ## Documentation
 - Build locally: `pip install -r docs/requirements.txt && sphinx-build -b html docs docs/_build/html`
@@ -230,41 +229,25 @@ pytest -q
 ```
 
 ## ROS launch
-- Build your workspace, source setup, set topics/extrinsics in `entfac_fusion_ros/config/core.yaml` + `entfac_fusion_ros/config/expert.yaml` (and layer any site overrides in launch).
+- Build your workspace, source setup, set topics/extrinsics in `prune_ros/config/core.yaml` + `prune_ros/config/expert.yaml` (and layer any site overrides in launch).
 - Launch (auto-detects depth vs. LiDAR based on the provided topics):
   ```bash
-  roslaunch entfac_fusion_ros prune.launch
+  roslaunch prune_ros prune.launch
   ```
 - Debug startup report + DEBUG logs:
   ```bash
-  roslaunch entfac_fusion_ros prune.launch debug:=true
+  roslaunch prune_ros prune.launch debug:=true
   ```
 - Use file-based intrinsics instead of waiting for a CameraInfo topic:
   ```bash
-  roslaunch entfac_fusion_ros prune.launch \
+  roslaunch prune_ros prune.launch \
     camera_info_txt:=/path/to/camera_info.txt \
     camera_frame:=camera_color_optical_frame
-  ```
-- Curt Mini ICNF replay with UFOMap enabled and RViz disabled:
-  ```bash
-  roslaunch entfac_fusion_ros forestsphere/curt_mini.launch \
-    play_bag:=true \
-    bag_path:=/bags/2026_03_27_17_02_24__icnf-curt__ros1_chunk_000.bag \
-    localization_bag:=/bags/ICNF_curt_localization_50hz.bag \
-    camera_topic:=/camera/color/image_raw \
-    camera_info_txt:=$(rospack find entfac_fusion_ros)/config/forestsphere/curt_mini_realsense_camera_info_720p.txt \
-    dataset_config:=$(rospack find entfac_fusion_ros)/config/forestsphere/icnf_curt_mini.yaml \
-    run_ufomap:=true \
-    rviz:=false
-  ```
-- Headless Docker wrapper for the same Curt Mini path:
-  ```bash
-  docker compose -f dataset-compose.yml run --rm curt-mini-gui
   ```
 - To decompress compressed topics, set `use_republish:=true` and provide base input topics (no `/compressed` suffix), e.g. `semantic_in_topic:=/segmentation/test`.
 - Choupal bag example (plays bags, republishes `/segmentation/test` from compressed, and loads TF from `/bags/sensor-box.urdf`):
   ```bash
-  roslaunch entfac_fusion_ros choupal_colored_pcl.launch
+  roslaunch prune_ros choupal_colored_pcl.launch
   ```
 - Param precedence: YAML loaded via `rosparam` sets defaults; later `<param>` tags override.
 - Avoid setting empty-string params in launch files since they overwrite YAML.
@@ -316,14 +299,3 @@ color_map:
     to avoid extra copies.
   - Downsampling uses stride slicing (nearest-neighbor), so labels remain valid.
 
-## ForestSphere autonomous recovery loop
-Use the watchdog below for the long-running semantic pointcloud export recovery workflow:
-
-```bash
-```
-
-It persists lightweight state under `output/semantic_pointcloud_bags/`, polls the active ICNF/Airfield export runs, validates completed bags before moving them into `kDrive`, and handles the recovery paths already seen in practice:
-- playback finished but recorder did not finalize
-- recorder exited before a bag was written
-- Airfield semantic replay blocked by an unindexed `godzilla` bag
-- Airfield RGB redo after the `rgb` field bugfix

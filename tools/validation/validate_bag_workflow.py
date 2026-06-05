@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CurtMini bag validation workflow:
+Bag validation workflow:
   - Replay bag through prune_node
   - Capture sync offset metrics
   - Check projection diagnostics
@@ -175,11 +175,11 @@ def analyze_masking_artifacts(output_dir):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Validate CurtMini bag workflow: sync offsets, projection, masks."
+        description="Validate a bag workflow: sync offsets, projection, masks."
     )
     parser.add_argument("bag_path", help="Path to rosbag file")
     parser.add_argument("--config", default="curt_mini.yaml", 
-                       help="Config YAML relative to entfac_fusion_ros/config/")
+                       help="Config YAML relative to prune_ros/config/")
     parser.add_argument("--output-dir", default="./bag_validation_output",
                        help="Output directory for diagnostics")
     parser.add_argument("--replay-duration", type=int, default=30,

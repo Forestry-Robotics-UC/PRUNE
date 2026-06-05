@@ -12,9 +12,9 @@ def test_write_semantic_ufomap_run_params_writes_expected_yaml(tmp_path):
             "--output",
             str(out_path),
             "--semantic-bag",
-            "/bags/icnf_ndvi.bag",
+            "/bags/semantic_input.bag",
             "--localization-bag",
-            "/bags/icnf_loc.bag",
+            "/bags/localization_input.bag",
             "--play-rate",
             "1.0",
             "--rosbag-skip-empty-sec",
@@ -69,8 +69,8 @@ def test_write_semantic_ufomap_run_params_writes_expected_yaml(tmp_path):
 
     assert result.returncode == 0, result.stderr
     text = out_path.read_text()
-    assert "semantic_bag: /bags/icnf_ndvi.bag\n" in text
-    assert "localization_bag: /bags/icnf_loc.bag\n" in text
+    assert "semantic_bag: /bags/semantic_input.bag\n" in text
+    assert "localization_bag: /bags/localization_input.bag\n" in text
     assert "rosbag_skip_empty_sec: 20\n" in text
     assert "localization_topic: /localization_50hz\n" in text
     assert "localization_parent_frame: odom\n" in text

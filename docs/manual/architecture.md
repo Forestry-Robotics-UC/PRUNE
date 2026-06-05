@@ -2,7 +2,7 @@
 
 ## Module map
 
-### `entfac_fusion_core` (ROS-agnostic)
+### `prune_core` (ROS-agnostic)
 
 - `types/observations.py`: NumPy dataclasses
 - `utils/validation.py`: shape/dtype/SE(3) validation helpers
@@ -11,15 +11,15 @@
 - `transforms/se3.py`: SE(3) point transforms
 - `colored_pcl/fusion.py`: public fusion entry points
 
-### `entfac_fusion_ros` (ROS wrappers)
+### `prune_ros` (ROS wrappers)
 
 - `scripts/prune_node.py`: roslaunch entrypoint
-- `entfac_fusion_ros/prune_node.py`: main ROS node
-- `entfac_fusion_ros/conversions.py`: fast `sensor_msgs` -> NumPy conversion
-- `entfac_fusion_ros/pc2.py`: NumPy -> `PointCloud2` packing
-- `entfac_fusion_ros/ply.py`: async PLY export
-- `entfac_fusion_ros/tf_utils.py`: TF -> matrix utilities
-- `entfac_fusion_ros/status.py`: periodic status reporting
+- `prune_ros/prune_node.py`: main ROS node
+- `prune_ros/conversions.py`: fast `sensor_msgs` -> NumPy conversion
+- `prune_ros/pc2.py`: NumPy -> `PointCloud2` packing
+- `prune_ros/ply.py`: async PLY export
+- `prune_ros/tf_utils.py`: TF -> matrix utilities
+- `prune_ros/status.py`: periodic status reporting
 
 ## Data flow (single frame)
 
@@ -28,7 +28,7 @@
    - geometry (depth image or LiDAR cloud)
    - camera info
    - optional confidence image
-   - optional invalid-mask image from ENTFAC Perception
+   - optional invalid-mask image from PRUNE Perception
 2. Optional sensor-domain correction:
    - semantic undistort
    - rolling-shutter correction

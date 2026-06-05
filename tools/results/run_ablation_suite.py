@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate or execute CurtMini ablation run commands for results collection."""
+"""Generate or execute ablation run commands for results collection."""
 
 from __future__ import annotations
 
@@ -149,13 +149,13 @@ def main() -> int:
     parser.add_argument("--variants", nargs="+", default=list(VARIANTS.keys()))
     parser.add_argument(
         "--base-config",
-        default="$(find entfac_fusion_ros)/config/forestsphere/icnf_curt_mini.yaml",
+        default="$(find prune_ros)/config/dataset.yaml",
     )
-    parser.add_argument("--fusion-package", default="entfac_fusion_ros")
+    parser.add_argument("--fusion-package", default="prune_ros")
     parser.add_argument(
         "--launch-file",
-        default="forestsphere/curt_mini.launch",
-        help="roslaunch file for the fusion pipeline; default targets the ForestSphere CurtMini overlay",
+        default="prune.launch",
+        help="roslaunch file for the fusion pipeline",
     )
     parser.add_argument(
         "--study-name",

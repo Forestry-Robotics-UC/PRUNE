@@ -38,13 +38,6 @@ Directory of bags (all `*.bag` in the directory are aggregated):
 python tools/diagnostics/rosbag_time_skew.py /data/bags /camera/image /os_cloud_node/points
 ```
 
-## Container Workflow (Forestsphere)
-- Start one dataset container:
-  - `docker compose -f docker-compose.forestsphere.yml up -d curt-mini`
-- Run the tool in the container:
-  - `docker exec -it entfac_curt_mini bash`
-  - `python tools/diagnostics/rosbag_time_skew.py /bags /camera/image /os_cloud_node/points`
-
 ## Notes and Limits
 - Requires ROS Noetic Python environment with `rosbag` available.
 - Only messages with `msg.header.stamp` are considered.
@@ -80,9 +73,9 @@ Outputs:
 - optional overlays under `<bag>/<variant>/overlays/`
 
 The runner writes shell commands by default. Use `--execute` only inside a
-prepared ROS Noetic/CurtMini environment.
+prepared ROS Noetic environment.
 
-The default launch target is `entfac_fusion_ros forestsphere/curt_mini.launch`.
+The default launch target is `prune_ros prune.launch`.
 Use `--launch-file` when running the same result scripts from a branch with a
 different launch layout. Use `--study-name icist_2026` when you want the old
 conference-specific folder naming.

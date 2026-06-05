@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bag validation runner for Docker environment
-# Usage: docker-compose run --rm sensor-fusion-ros /bags/validation_runner.sh <bag_path>
+# Usage: docker compose run --rm sensor-fusion-ros /bags/validation_runner.sh <bag_path>
 
 set -e
 
@@ -65,7 +65,7 @@ echo "[Stage 3a] Starting bag replay..."
 
 # Start prune_node with debug enabled
 echo "[Stage 3b] Starting prune_node..."
-rosrun entfac_fusion_ros prune_node.py _debug:=true \
+rosrun prune_ros prune_node.py _debug:=true \
     2>&1 | tee -a "$OUTPUT_DIR/prune_node.log" &
 NODE_PID=$!
 

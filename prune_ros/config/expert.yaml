@@ -1,0 +1,73 @@
+# Expert prune_node tuning
+rolling_shutter_enable: false  # apply rotation-only rolling shutter correction using IMU
+rolling_shutter_readout_sec: 0.0  # total readout time in seconds (0 disables)
+rolling_shutter_direction: "top_to_bottom"  # top_to_bottom or bottom_to_top
+imu_topic: ""                  # IMU topic for rolling shutter correction
+imu_frame: ""                  # optional IMU frame override
+imu_cache_size: 2000           # IMU cache size
+imu_cache_max_dt_sec: 0.02     # max dt between semantic frame and IMU
+camera_metadata_topic: ""      # RealSense metadata topic (optional)
+metadata_readout_key: -1       # metadata key for readout time; -1 disables
+metadata_readout_scale: 1.0e-6 # scale to seconds (e.g., usec -> 1e-6)
+metadata_max_dt_sec: 0.1       # max dt between metadata and semantic frame
+
+lidar_deskew_enable: false     # enable LiDAR deskew using per-point time + IMU
+lidar_deskew_mode: "rotation"  # rotation | translation | both
+lidar_deskew_ref: "start"      # start or mid
+lidar_deskew_imu_samples: 1    # IMU samples across each scan for deskew; >1 improves fast-motion correction at higher CPU cost
+lidar_time_field: "t"          # per-point time field name in PointCloud2
+lidar_time_scale: 1.0e-9       # scale to seconds (ns -> 1e-9)
+lidar_imu_topic: ""            # IMU topic for LiDAR deskew
+lidar_imu_frame: ""            # optional IMU frame override
+lidar_imu_cache_size: 2000     # IMU cache size for deskew
+lidar_imu_cache_max_dt_sec: 0.02 # max dt between LiDAR scan time and IMU
+lidar_imu_accel_gravity_compensated: true # IMU linear acceleration is gravity-compensated
+
+# Online LiDAR-camera calibration health + lightweight correction (classical/KISS).
+online_calibration_enable: false           # keep disabled until observability is strong enough for stable updates
+online_calibration_every_n_frames: 100      # run update every N lidar callbacks
+online_calibration_max_points: 8000        # max lidar points used per update (uniform stride subsampling above this)
+online_calibration_edge_threshold: 0.20    # edge threshold for observability density checks
+online_calibration_step_deg: 0.20          # finite-difference perturbation step in degrees
+online_calibration_learning_rate: 0.25     # rotational correction update gain
+online_calibration_max_correction_deg: 3.0 # per-axis clamp for online correction (roll/pitch/yaw)
+online_calibration_min_observability: 0.15 # minimum observability needed to apply updates
+online_calibration_min_fov_points: 500     # minimum in-FOV lidar points for a valid update
+online_calibration_min_sem_edge_density: 0.010 # expected semantic edge density for good observability
+online_calibration_min_depth_edge_density: 0.010 # expected lidar depth-edge density for good observability
+online_calibration_health_ema_alpha: 0.15  # EMA alpha for health score smoothing
+online_calibration_health_std_window: 40   # sliding window size for alignment-score stability
+online_calibration_health_std_scale: 0.08  # scale that maps score std to stability confidence
+online_calibration_health_score_center: 0.25 # alignment-score logistic midpoint for health
+online_calibration_health_score_scale: 0.10 # alignment-score logistic scale for health
+online_calibration_log_period_sec: 2.0     # seconds between online calibration status logs (0 disables periodic logs)
+
+tracked_reprojection_enable: false          # stateful feature-tracked LiDAR reprojection diagnostic; best used offline on rosbags
+tracked_reprojection_max_corners: 300       # max tracked image features
+tracked_reprojection_quality_level: 0.01    # Shi-Tomasi quality level for feature detection
+tracked_reprojection_min_distance_px: 8.0   # minimum spacing between tracked features
+tracked_reprojection_min_tracks: 80         # replenish features when active tracks drop below this count
+tracked_reprojection_fb_thresh_px: 1.0      # forward-backward optical-flow consistency gate in pixels
+tracked_reprojection_depth_edge_thresh: 0.10 # normalized LiDAR depth-edge threshold used for the reprojection target
+tracked_reprojection_min_image_edge: 0.08   # minimum image-edge strength required for a tracked feature to affect the metric
+tracked_reprojection_log_period_sec: 2.0    # seconds between tracked reprojection status logs (0 logs every callback)
+
+# RT optimisations for depth-map rasterization and edge detection.
+depth_map_subsample: 1         # 1=full-res (default), 2=half-res, 4=quarter-res depth buffer
+edge_cache_max_age_sec: 0.0    # 0=recompute every frame; 0.1=reuse for 2 frames at 20 Hz
+use_range_image_edges: "auto"  # "auto"=range-image path for organized clouds, "always", "never"
+overlay_output_dir: ""         # empty=disabled; set to save 3-layer GIMP overlays
+overlay_output_stride: 20      # save overlay every Nth accepted frame
+overlay_dot_radius: 2          # LiDAR dot radius in pixels
+
+enable_profiling: false
+
+ply_output_dir: ""             # empty uses <prune_ros>/output/ply; used by ~save_ply / ~set_ply_recording
+ply_target_frame: ""           # optional TF frame for PLY output (empty uses target_frame)
+ply_tf_use_latest: false       # if true, fall back to latest TF for PLY export
+ply_tf_tolerance_sec: 0.02     # max allowed time difference when using latest TF for PLY export
+
+# Optional static extrinsics (row-major 4x4). If empty, TF lookup is used.
+static_target_T_depth: []      # depth frame -> target frame
+static_camera_T_lidar: []      # lidar frame -> camera frame
+static_target_T_lidar: []      # lidar frame -> target frame

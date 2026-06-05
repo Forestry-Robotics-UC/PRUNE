@@ -16,21 +16,15 @@ rosdep update
 rosdep install --from-paths src --ignore-src -r -y
 catkin_make
 source devel/setup.bash
-roslaunch entfac_fusion_ros prune.launch
+roslaunch prune_ros prune.launch
 ```
 
 Node defaults are split into:
 
-- `entfac_fusion_ros/config/core.yaml`
-- `entfac_fusion_ros/config/expert.yaml`
+- `prune_ros/config/core.yaml`
+- `prune_ros/config/expert.yaml`
 
-Forestsphere profile:
-
-```bash
-roslaunch entfac_fusion_ros forestsphere.launch
-```
-
-Config defaults live in `entfac_fusion_ros/config/core.yaml` and `entfac_fusion_ros/config/expert.yaml`.
+Config defaults live in `prune_ros/config/core.yaml` and `prune_ros/config/expert.yaml`.
 
 ## Offline time sync (rosbag)
 
