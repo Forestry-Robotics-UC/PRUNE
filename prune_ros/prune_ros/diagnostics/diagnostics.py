@@ -44,10 +44,6 @@ class DiagnosticsOrchestrator:
         if self._debug_pub is not None:
             self._debug_pub.publish_tracked_reprojection(overlay_img, error_px, header)
 
-    def publish_calibration_health(self, snapshot) -> None:
-        if self._debug_pub is not None:
-            self._debug_pub.publish_calibration_health(snapshot)
-
     def publish_lidar_projection(self, base_rgb, image_shape, uv, header, colors_u8=None) -> None:
         if self._debug_pub is not None:
             self._debug_pub.publish_lidar_projection(

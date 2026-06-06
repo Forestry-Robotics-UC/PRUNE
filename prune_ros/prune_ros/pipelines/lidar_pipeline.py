@@ -220,12 +220,6 @@ class LidarFusionPipeline:
             points = self._apply_lidar_points_compat(points)
         num_input_points = int(points.shape[0])
         corrected_camera_T_lidar = camera_T_lidar
-        if self._node._calibration is not None and semantic_debug_img is not None:
-            sem_h, sem_w = semantic_debug_img.shape[:2]
-            corrected_camera_T_lidar, calib_snapshot = self._node._calibration_bridge.update(points=points, sem_img=semantic_debug_img, sem_type=semantic_debug_type, intrinsics=intrinsics, camera_T_lidar=camera_T_lidar, image_shape=(int(sem_h), int(sem_w)))
-            if calib_snapshot is not None:
-                self._node._diagnostics.publish_calibration_health(calib_snapshot)
-            self._node._online_calibration_status = self._node._calibration_bridge.status
         rolling_shutter_readout_sec = self._get_readout_sec(sem_msg.header.stamp) if self._node.rolling_shutter_enable else 0.0
         rolling_shutter_omega_cam = self._lookup_imu_omega(sem_msg.header.stamp) if rolling_shutter_readout_sec > 0.0 else None
         proj_result = self._node._projector.process_frame(points=points, labels=labels, packed_img=packed_img, confidence=confidence, projection_invalid_mask=projection_invalid_mask, intrinsics=intrinsics, camera_T_lidar=corrected_camera_T_lidar, target_T_lidar=target_T_lidar, semantic_shape=semantic_shape, include_rgb=include_rgb, rolling_shutter_omega_cam=rolling_shutter_omega_cam, rolling_shutter_readout_sec=rolling_shutter_readout_sec, cloud_height=int(lidar_msg.height), cloud_width=int(lidar_msg.width), frame_stamp=lidar_msg.header.stamp.to_sec(), overlay_packed_img=overlay_packed_img)

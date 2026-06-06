@@ -23,25 +23,6 @@ lidar_imu_cache_size: 2000     # IMU cache size for deskew
 lidar_imu_cache_max_dt_sec: 0.02 # max dt between LiDAR scan time and IMU
 lidar_imu_accel_gravity_compensated: true # IMU linear acceleration is gravity-compensated
 
-# Online LiDAR-camera calibration health + lightweight correction (classical/KISS).
-online_calibration_enable: false           # keep disabled until observability is strong enough for stable updates
-online_calibration_every_n_frames: 100      # run update every N lidar callbacks
-online_calibration_max_points: 8000        # max lidar points used per update (uniform stride subsampling above this)
-online_calibration_edge_threshold: 0.20    # edge threshold for observability density checks
-online_calibration_step_deg: 0.20          # finite-difference perturbation step in degrees
-online_calibration_learning_rate: 0.25     # rotational correction update gain
-online_calibration_max_correction_deg: 3.0 # per-axis clamp for online correction (roll/pitch/yaw)
-online_calibration_min_observability: 0.15 # minimum observability needed to apply updates
-online_calibration_min_fov_points: 500     # minimum in-FOV lidar points for a valid update
-online_calibration_min_sem_edge_density: 0.010 # expected semantic edge density for good observability
-online_calibration_min_depth_edge_density: 0.010 # expected lidar depth-edge density for good observability
-online_calibration_health_ema_alpha: 0.15  # EMA alpha for health score smoothing
-online_calibration_health_std_window: 40   # sliding window size for alignment-score stability
-online_calibration_health_std_scale: 0.08  # scale that maps score std to stability confidence
-online_calibration_health_score_center: 0.25 # alignment-score logistic midpoint for health
-online_calibration_health_score_scale: 0.10 # alignment-score logistic scale for health
-online_calibration_log_period_sec: 2.0     # seconds between online calibration status logs (0 disables periodic logs)
-
 tracked_reprojection_enable: false          # stateful feature-tracked LiDAR reprojection diagnostic; best used offline on rosbags
 tracked_reprojection_max_corners: 300       # max tracked image features
 tracked_reprojection_quality_level: 0.01    # Shi-Tomasi quality level for feature detection

@@ -50,7 +50,6 @@ def build_debug_pub_params(node: Any) -> DebugPublisherParams:
         debug_range_view=bool(node.debug_range_view),
         debug_publish_fov_points=bool(node.debug_publish_fov_points),
         tracked_reprojection_enable=bool(node.tracked_reprojection_enable),
-        online_calibration_enable=bool(node.online_calibration_enable),
         debug_output_dir=str(node.debug_output_dir),
         debug_output_stride=int(node.debug_output_stride),
     )
@@ -63,7 +62,6 @@ def build_debug_publisher(node: Any) -> DebugPublisher | None:
             node.debug_range_view,
             node.debug_publish_fov_points,
             node.tracked_reprojection_enable,
-            node.online_calibration_enable,
         ]
     ):
         return None

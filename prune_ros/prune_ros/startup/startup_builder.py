@@ -5,13 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import rospy
 
 from ..pipelines.camera_model import CameraModel
 from prune_ros.config import ColorConfig, GateConfig, SyncConfig
 from ..pipelines.frame_inputs import FrameInputPreparer
-from ..pipelines.online_calibration_bridge import OnlineCalibrationBridge
 from ..pipelines.ply_service import PlyRecordingService
 from ..pipelines.semantic_inputs import SemanticInputParser
 from ..pipelines.sync_policy import StampPolicy
@@ -24,7 +22,6 @@ class StartupComponents:
     camera_model: CameraModel
     ply_service: PlyRecordingService
     tracked_runtime: TrackedReprojectionRuntime
-    calibration_bridge: OnlineCalibrationBridge
     semantic_parser: SemanticInputParser
     frame_inputs: FrameInputPreparer
 
@@ -33,7 +30,6 @@ class StartupComponents:
         node._camera_model = self.camera_model
         node._ply_service = self.ply_service
         node._tracked_runtime = self.tracked_runtime
-        node._calibration_bridge = self.calibration_bridge
         node._semantic_parser = self.semantic_parser
         node._frame_inputs = self.frame_inputs
 
@@ -56,20 +52,7 @@ class PruneStartupBuilder:
             node.mode = node._bootstrap.detect_mode()
 
     def finalize_mode_status(self) -> None:
-        node = self._node
-        node._online_calibration_rpy_rad = np.zeros(3, dtype=np.float64)
-        if node.online_calibration_enable and node.mode != "lidar":
-            node._log.warn(
-                "__init__",
-                "online_calibration_enable=true requires lidar mode; disabling because mode=%s",
-                node.mode,
-            )
-            node.online_calibration_enable = False
-            node._online_calibration_status = f"disabled (mode={node.mode})"
-        elif node.online_calibration_enable:
-            node._online_calibration_status = "active"
-        else:
-            node._online_calibration_status = "disabled"
+        return
 
     def build_components(self) -> StartupComponents:
         node = self._node
@@ -95,7 +78,6 @@ class PruneStartupBuilder:
             camera_model=camera_model,
             ply_service=PlyRecordingService(node, node._log),
             tracked_runtime=TrackedReprojectionRuntime(node),
-            calibration_bridge=OnlineCalibrationBridge(node),
             semantic_parser=SemanticInputParser(
                 node,
                 ColorConfig(

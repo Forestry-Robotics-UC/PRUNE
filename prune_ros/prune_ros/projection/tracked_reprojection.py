@@ -10,7 +10,7 @@ Uses OpenCV for optical-flow tracking.  No ROS imports.
 Entry point: :class:`TrackedReprojection`.
 
 Intended primarily for offline rosbag review or focused validation runs —
-heavier than the online edge-alignment score.
+heavier than the range-view edge-alignment score.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from prune_ros.calibration import compute_semantic_edge_map
+from prune_ros.projection.edge_maps import compute_image_edge_map
 
 _log = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class TrackedReprojection:
         px = np.clip(np.round(next_xy[:, 0]).astype(np.int32), 0, gray.shape[1] - 1)
         py = np.clip(np.round(next_xy[:, 1]).astype(np.int32), 0, gray.shape[0] - 1)
 
-        sem_edges = compute_semantic_edge_map(sem_img, sem_type)
+        sem_edges = compute_image_edge_map(sem_img, sem_type)
         img_edge_strength = np.asarray(sem_edges[py, px], dtype=np.float32)
         edge_keep = img_edge_strength >= float(self._p.min_image_edge)
         if np.any(edge_keep):

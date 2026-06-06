@@ -96,7 +96,6 @@ class RuntimeSetup:
 
     def setup_subsystems(self) -> None:
         node = self._node
-        node._calibration = node._calibration_bridge.build(node._projector)
         node._tracked_repr = node._tracked_runtime.build()
         node._debug_pub = node._runtime_builders.build_debug_publisher(node)
         node._diagnostics = DiagnosticsOrchestrator(node, node._debug_pub)

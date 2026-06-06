@@ -58,23 +58,6 @@ Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/co
 | `~metadata_readout_scale` | `float` | `1e-06` | Scale applied to metadata value to convert to seconds (e.g., use 1e-6 for usec). |
 | `~mode` | `str` | `''` | Force fusion mode ('depth' or 'lidar'); empty string enables auto-detect. |
 | `~num_labels` | `int` | `0` | Optional number of label IDs (0=auto from first label image). Used only when ~semantic_input_type='labels' and ~colorize_labels is true with empty ~color_map. |
-| `~online_calibration_edge_threshold` | `float` | `0.2` | Edge threshold in [0,1] used for observability density checks on semantic/depth edge maps. |
-| `~online_calibration_enable` | `bool` | `false` | Enable lightweight online LiDAR-camera misalignment estimation with health/uncertainty and small projection correction (classical, no neural models). |
-| `~online_calibration_every_n_frames` | `int` | `10` | Run online calibration update every N lidar callbacks (>=1). |
-| `~online_calibration_health_ema_alpha` | `float` | `0.15` | EMA alpha for calibration health score smoothing. |
-| `~online_calibration_health_score_center` | `float` | `0.25` | Alignment-score midpoint used by the health logistic transfer. |
-| `~online_calibration_health_score_scale` | `float` | `0.1` | Alignment-score scale used by the health logistic transfer. |
-| `~online_calibration_health_std_scale` | `float` | `0.08` | Scale that maps alignment-score std into stability confidence. |
-| `~online_calibration_health_std_window` | `int` | `40` | Sliding window size used to estimate alignment-score stability. |
-| `~online_calibration_learning_rate` | `float` | `0.25` | Update gain for online rotational correction (smaller is more conservative). |
-| `~online_calibration_log_period_sec` | `float` | `2.0` | Minimum seconds between online calibration status logs. |
-| `~online_calibration_max_correction_deg` | `float` | `3.0` | Clamp for each correction angle component (roll/pitch/yaw) in degrees. |
-| `~online_calibration_max_points` | `int` | `8000` | Max number of LiDAR points used by online calibration updates (uniform stride subsampling above this). |
-| `~online_calibration_min_depth_edge_density` | `float` | `0.01` | Minimum LiDAR depth-edge density expected for well-observable frames. |
-| `~online_calibration_min_fov_points` | `int` | `500` | Minimum in-FOV LiDAR points required by the online calibration update. |
-| `~online_calibration_min_observability` | `float` | `0.15` | Minimum observability required before correction updates are applied. |
-| `~online_calibration_min_sem_edge_density` | `float` | `0.01` | Minimum semantic edge density expected for well-observable frames. |
-| `~online_calibration_step_deg` | `float` | `0.2` | Finite-difference perturbation step in degrees for rotational misalignment estimation. |
 | `~pair_max_dt_sec` | `float` | `0.03` | Hard max allowed |Δt| (seconds) between semantic and geometry; <=0 disables. |
 | `~ply_output_dir` | `str` | `''` | Directory where PLY files are written (empty uses <prune_ros>/output/ply). |
 | `~ply_target_frame` | `str` | `''` | Optional TF frame to transform PLY output to (ply_target_frame <- target_frame). Empty means use target_frame. |

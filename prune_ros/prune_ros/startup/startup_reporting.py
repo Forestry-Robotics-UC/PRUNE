@@ -136,12 +136,11 @@ class StartupReporter:
         node = self._node
         node._log.info(
             "_log_correction_statuses",
-            "correction status: undistort=%s rolling_shutter=%s lidar_deskew=%s lidar_points_compat=%s online_calibration=%s",
+            "correction status: undistort=%s rolling_shutter=%s lidar_deskew=%s lidar_points_compat=%s",
             node._undistort_status,
             node._rolling_shutter_status,
             node._lidar_deskew_status,
             node._compat_lidar_points_status,
-            node._online_calibration_status,
         )
 
     def render_startup_table(self) -> str:
@@ -232,37 +231,6 @@ class StartupReporter:
             ),
             ("debug_range_view", str(bool(node.debug_range_view))),
             ("debug_publish_fov_points", str(bool(node.debug_publish_fov_points))),
-            ("online_calibration_enable", str(bool(node.online_calibration_enable))),
-            ("online_calibration_status", node._online_calibration_status),
-            (
-                "online_calibration_every_n_frames",
-                str(int(node.online_calibration_every_n_frames)),
-            ),
-            (
-                "online_calibration_max_points",
-                str(int(node.online_calibration_max_points)),
-            ),
-            (
-                "online_calibration_step_deg",
-                f"{node.online_calibration_step_deg:.3f}",
-            ),
-            (
-                "online_calibration_learning_rate",
-                f"{node.online_calibration_learning_rate:.3f}",
-            ),
-            (
-                "online_calibration_max_correction_deg",
-                f"{node.online_calibration_max_correction_deg:.3f}",
-            ),
-            (
-                "online_calibration_min_observability",
-                f"{node.online_calibration_min_observability:.3f}",
-            ),
-            (
-                "online_calibration_rpy_deg",
-                "[%.3f %.3f %.3f]"
-                % tuple(np.degrees(node._online_calibration_rpy_rad).tolist()),
-            ),
             ("rolling_shutter_enable", str(bool(node.rolling_shutter_enable))),
             ("rolling_shutter_status", node._rolling_shutter_status),
             ("rolling_shutter_readout_sec", f"{node.rolling_shutter_readout_sec:.6f}"),

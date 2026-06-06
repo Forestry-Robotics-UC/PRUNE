@@ -299,8 +299,6 @@ class NodeInitializer:
         node.debug_tracked_reprojection_topic = "/debug/tracked_reprojection"
         node.debug_tracked_reprojection_error_topic = "/debug/tracked_reprojection_error_px"
         node.debug_fov_points_topic = "/debug/lidar_points_in_fov"
-        node.debug_calibration_health_topic = "/debug/calibration_health"
-        node.debug_calibration_uncertainty_topic = "/debug/calibration_uncertainty"
         node.enable_profiling = node._get_param_bool(
             "~enable_profiling",
             False,
@@ -387,10 +385,6 @@ class NodeInitializer:
         node._apply_loaded_config(experiment_config)
         calibration_config = load_calibration_config(node)
         node._apply_loaded_config(calibration_config)
-        node._online_calibration_requested = bool(node.online_calibration_enable)
-        node._online_calibration_status = (
-            "requested" if node._online_calibration_requested else "disabled"
-        )
         node._undistort_requested = bool(node.undistort_semantic)
         node._undistort_status = "requested" if node._undistort_requested else "disabled"
         node._rolling_shutter_requested = bool(node.rolling_shutter_enable)

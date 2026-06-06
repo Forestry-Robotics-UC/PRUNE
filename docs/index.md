@@ -11,7 +11,6 @@ manual/architecture
 manual/ros_contract
 manual/tf_cheatsheet
 manual/parameters
-manual/online_calibration_methodology
 manual/failure_modes
 manual/core_api
 manual/public_api

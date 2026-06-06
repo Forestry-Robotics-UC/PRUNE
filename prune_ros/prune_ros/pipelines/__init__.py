@@ -7,7 +7,6 @@ _EXPORTS = {
     "DepthFusionPipeline": (".depth_pipeline", "DepthFusionPipeline"),
     "FrameInputPreparer": (".frame_inputs", "FrameInputPreparer"),
     "LidarFusionPipeline": (".lidar_pipeline", "LidarFusionPipeline"),
-    "OnlineCalibrationBridge": (".online_calibration_bridge", "OnlineCalibrationBridge"),
     "PlyRecordingService": (".ply_service", "PlyRecordingService"),
     "LastPcl": (".results", "LastPcl"),
     "PipelineResult": (".results", "PipelineResult"),

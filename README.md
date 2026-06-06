@@ -90,10 +90,6 @@ pcl = fuse_depth_semantics(
   - `~sync_slop_sec`, `~pair_max_dt_sec`, `~sync_queue_size`: ApproximateTimeSynchronizer slop/queue and hard max |Δt| for pairing.
   - `~debug_project_lidar`: publish a debug image with projected lidar points (topic `/debug/lidar_projection`, depth coloring, stride=5).
   - `~debug_output_dir`, `~debug_output_stride`: save sampled debug overlays as PNGs under `prune_ros/output/debug/` by default.
-  - `~online_calibration_enable`: enable lightweight online LiDAR-camera misalignment estimation (classical, no neural networks), with health and uncertainty outputs.
-  - `~online_calibration_every_n_frames`, `~online_calibration_max_points`: control compute budget for online calibration updates.
-  - `~online_calibration_step_deg`, `~online_calibration_learning_rate`, `~online_calibration_max_correction_deg`: rotational correction update behavior and safety clamps.
-  - `~online_calibration_min_observability`, `~online_calibration_min_fov_points`: gate updates when the scene is weakly observable.
   - `~cloud_stamp_source`: select output PointCloud2 stamp (`auto`, `semantic`, `depth`, `lidar`, `latest`, `earliest`, `midpoint`).
   - `~cloud_time_offset_sec`: signed seconds offset applied to the output stamp (negative shifts earlier).
   - `~enable_profiling`: cProfile summary per callback (off by default).
@@ -127,13 +123,6 @@ rosservice call /prune_node/set_ply_recording "data: true"
 rosservice call /prune_node/set_ply_recording "data: false"
 ```
 Files are written under `~ply_output_dir` (default: `prune_ros/output/ply/`).
-
-### Online calibration health (edge/KISS)
-- For LiDAR mode, the node can run a low-rate rotational correction loop using semantic-vs-depth edge alignment.
-- Health/uncertainty topics:
-  - `/debug/calibration_health` (`std_msgs/Float32`, 0..1 where higher is better)
-  - `/debug/calibration_uncertainty` (`std_msgs/Float32`, 0..1 where lower is better)
-- Keep correction disabled until bag metrics show stable observability and low reprojection error.
 
 ### PRUNE Perception bridge
 - Preferred products from PRUNE Perception:
@@ -198,7 +187,6 @@ docker run --rm -it ros-prune
 ## Documentation
 - Build locally: `pip install -r docs/requirements.txt && sphinx-build -b html docs docs/_build/html`
 - Public API (v1.0): `docs/manual/public_api.md`
-- Online calibration methodology (paper-style): `docs/manual/online_calibration_methodology.md`
 
 ## Time sync tools (offline bags)
 Current offline timing utility:

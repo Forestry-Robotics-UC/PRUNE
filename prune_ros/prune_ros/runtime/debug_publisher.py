@@ -23,11 +23,7 @@ import rospy
 from sensor_msgs.msg import Image, PointCloud2, PointField
 from std_msgs.msg import Float32
 
-from prune_core.calibration import CalibrationHealthSnapshot
-from prune_ros.calibration import (
-    _edge_alignment_score,
-    compute_semantic_edge_map,
-)
+from prune_ros.projection.edge_maps import compute_image_edge_map, edge_alignment_score
 
 
 @dataclass
@@ -43,8 +39,6 @@ class DebugPublisherParams:
     debug_publish_fov_points: bool = False
     # Tracked reprojection
     tracked_reprojection_enable: bool = False
-    # Calibration health
-    online_calibration_enable: bool = False
     # File saving
     debug_output_dir: str = ""
     debug_output_stride: int = 20
@@ -86,8 +80,6 @@ class DebugPublisher:
         self._tracked_pub: Optional[rospy.Publisher] = None
         self._tracked_err_pub: Optional[rospy.Publisher] = None
         self._fov_pts_pub: Optional[rospy.Publisher] = None
-        self._calib_health_pub: Optional[rospy.Publisher] = None
-        self._calib_uncertainty_pub: Optional[rospy.Publisher] = None
 
         if params.debug_project_lidar:
             self._proj_pub = rospy.Publisher("/debug/lidar_projection", Image, queue_size=1)
@@ -103,11 +95,6 @@ class DebugPublisher:
             )
         if params.debug_publish_fov_points:
             self._fov_pts_pub = rospy.Publisher("/debug/lidar_points_in_fov", PointCloud2, queue_size=1)
-        if params.online_calibration_enable:
-            self._calib_health_pub = rospy.Publisher("/debug/calibration_health", Float32, queue_size=1)
-            self._calib_uncertainty_pub = rospy.Publisher(
-                "/debug/calibration_uncertainty", Float32, queue_size=1
-            )
 
     def tick(self) -> None:
         """Increment the frame counter (call once per callback)."""
@@ -179,8 +166,8 @@ class DebugPublisher:
     ) -> None:
         if self._depth_pub is None:
             return
-        sem_edges = compute_semantic_edge_map(sem_img, sem_type)
-        score = _edge_alignment_score(sem_edges, edge_map)
+        sem_edges = compute_image_edge_map(sem_img, sem_type)
+        score = edge_alignment_score(sem_edges, edge_map)
         heat = _splat_confidence(u, v, point_confidence, depth_map.shape)
         self._publish_rgb_image(self._depth_pub, _depth_to_rgb(depth_map), header, "range_depth")
         self._publish_rgb_image(self._edge_pub, _edge_to_rgb(edge_map), header, "range_edge")
@@ -223,12 +210,6 @@ class DebugPublisher:
         msg.row_step = 12 * msg.width
         msg.data = np.ascontiguousarray(points, dtype=np.float32).tobytes()
         self._fov_pts_pub.publish(msg)
-
-    def publish_calibration_health(self, snapshot: CalibrationHealthSnapshot) -> None:
-        if self._calib_health_pub is not None:
-            self._calib_health_pub.publish(Float32(data=float(snapshot.health)))
-        if self._calib_uncertainty_pub is not None:
-            self._calib_uncertainty_pub.publish(Float32(data=float(snapshot.uncertainty)))
 
     # ------------------------------------------------------------------
     # Private helpers

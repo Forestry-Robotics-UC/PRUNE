@@ -37,11 +37,6 @@ class PruneRosIo:
             self._node._debug_tracked_reprojection_error_pub = rospy.Publisher(self._node.debug_tracked_reprojection_error_topic, Float32, queue_size=1)
         if self._node.debug_publish_fov_points:
             self._node._debug_fov_points_pub = rospy.Publisher(self._node.debug_fov_points_topic, PointCloud2, queue_size=1)
-        self._node._debug_calibration_health_pub = None
-        self._node._debug_calibration_uncertainty_pub = None
-        if self._node.online_calibration_enable:
-            self._node._debug_calibration_health_pub = rospy.Publisher(self._node.debug_calibration_health_topic, Float32, queue_size=1)
-            self._node._debug_calibration_uncertainty_pub = rospy.Publisher(self._node.debug_calibration_uncertainty_topic, Float32, queue_size=1)
 
     def setup_services(self) -> None:
         return
