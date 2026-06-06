@@ -117,6 +117,24 @@ class PruneConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_projection_config(node)
 
+    def test_projection_config_loads_adaptive_health_defaults(self):
+        node = MockNode({})
+
+        config = load_projection_config(node)
+
+        self.assertFalse(config.enable_adaptive_projection_health)
+        self.assertEqual(config.projection_health_warn_threshold, 0.5)
+        self.assertEqual(config.projection_health_bad_threshold, 0.25)
+        self.assertEqual(config.adaptive_confidence_threshold_offset, 0.1)
+        self.assertEqual(config.adaptive_depth_edge_threshold_scale, 0.8)
+        self.assertTrue(config.adaptive_prefer_suppression_on_bad_health)
+
+    def test_projection_config_rejects_invalid_adaptive_scale(self):
+        node = MockNode({"~adaptive_depth_edge_threshold_scale": 0.0})
+
+        with self.assertRaises(ValueError):
+            load_projection_config(node)
+
     def test_debug_config_creates_output_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = Path(tmp) / "debug-out"

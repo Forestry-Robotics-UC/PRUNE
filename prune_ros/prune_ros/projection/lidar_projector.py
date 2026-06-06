@@ -122,6 +122,23 @@ def __build_label_rgb_float_lut(
 _log = logging.getLogger(__name__)
 
 
+
+def projection_health_from_counts(
+    *,
+    total_points: int,
+    in_front_points: int,
+    projected_points: int,
+    rejection_ratio: float,
+) -> float:
+    """Conservative [0, 1] projection-health proxy from projection/gate counts."""
+    total = max(int(total_points), 1)
+    in_front = max(int(in_front_points), 0)
+    projected = max(int(projected_points), 0)
+    in_front_ratio = float(np.clip(in_front / float(total), 0.0, 1.0))
+    in_image_ratio = float(np.clip(projected / float(max(in_front, 1)), 0.0, 1.0))
+    rejection_term = 1.0 - float(np.clip(rejection_ratio, 0.0, 1.0))
+    return float(np.clip(in_front_ratio * in_image_ratio * rejection_term, 0.0, 1.0))
+
 # ---------------------------------------------------------------------------
 # Public dataclasses
 # ---------------------------------------------------------------------------
@@ -139,6 +156,7 @@ class ProjectionQualityResult:
     runtime_rasterize_ms: float = 0.0
     runtime_depth_edge_ms: float = 0.0
     runtime_occlusion_ms: float = 0.0
+    projection_health_score: float = 0.0
 
 
 @dataclass
@@ -161,6 +179,7 @@ class GateMetrics:
     runtime_depth_edge_ms: float = 0.0
     runtime_occlusion_ms: float = 0.0
     runtime_publish_ms: float = 0.0
+    projection_health_score: float = 0.0
 
 
 @dataclass
@@ -214,6 +233,12 @@ class LidarProjectorParams:
     use_invalid_mask: bool = True
     use_depth_edge_rejection: bool = True
     use_occlusion_gate: bool = True
+    enable_adaptive_projection_health: bool = False
+    projection_health_warn_threshold: float = 0.50
+    projection_health_bad_threshold: float = 0.25
+    adaptive_confidence_threshold_offset: float = 0.10
+    adaptive_depth_edge_threshold_scale: float = 0.80
+    adaptive_prefer_suppression_on_bad_health: bool = True
 
     # RT optimisations
     depth_map_subsample: int = 1       # 1=full-res, 2=half-res, 4=quarter-res depth buffer
@@ -647,6 +672,7 @@ class LidarProjector:
         metrics.runtime_rasterize_ms = quality.runtime_rasterize_ms
         metrics.runtime_depth_edge_ms = quality.runtime_depth_edge_ms
         metrics.runtime_occlusion_ms = quality.runtime_occlusion_ms
+        metrics.projection_health_score = float(quality.projection_health_score)
 
         labels_in = labels_in.astype(np.int64, copy=False)
         if np.any(invalid_reject):
@@ -950,6 +976,35 @@ class LidarProjector:
             if point_confidence is not None else None
         )
 
+        pre_health = projection_health_from_counts(
+            total_points=int(points_all.shape[0]),
+            in_front_points=(
+                int(np.count_nonzero(points_cam_all[:, 2] > 0.0))
+                if points_cam_all is not None and points_cam_all.shape[0]
+                else int(points_selected.shape[0])
+            ),
+            projected_points=int(u.shape[0]),
+            rejection_ratio=0.0,
+        )
+        adaptive_bad = bool(
+            p.enable_adaptive_projection_health
+            and pre_health < float(p.projection_health_bad_threshold)
+        )
+        effective_confidence_min = float(p.projection_confidence_min)
+        effective_depth_edge_thresh = float(p.projection_depth_edge_thresh)
+        if adaptive_bad:
+            effective_confidence_min = min(
+                1.0,
+                effective_confidence_min + float(p.adaptive_confidence_threshold_offset),
+            )
+            effective_depth_edge_thresh = float(
+                np.clip(
+                    effective_depth_edge_thresh * float(p.adaptive_depth_edge_threshold_scale),
+                    0.0,
+                    1.0,
+                )
+            )
+
         # --- Occlusion gate ---
         runtime_occlusion_ms = 0.0
         occlusion_reject = np.zeros(keep.shape[0], dtype=bool)
@@ -1006,7 +1061,7 @@ class LidarProjector:
             edge_values = query_neighborhood_reduce(
                 edge_map, us, vs, p.projection_depth_edge_radius_px, "max"
             )
-            depth_edge_reject = edge_values >= float(p.projection_depth_edge_thresh)
+            depth_edge_reject = edge_values >= effective_depth_edge_thresh
             if p.use_depth_edge_rejection:
                 keep &= ~depth_edge_reject
             edge_conf = np.clip(1.0 - edge_values, 0.0, 1.0).astype(np.float32, copy=False)
@@ -1017,10 +1072,24 @@ class LidarProjector:
 
         # --- Confidence gate ---
         confidence_reject = np.zeros(keep.shape[0], dtype=bool)
-        if p.projection_confidence_min > 0.0 and effective_conf is not None:
+        if effective_confidence_min > 0.0 and effective_conf is not None:
             if effective_conf.shape[0] == keep.shape[0]:
-                confidence_reject = effective_conf < float(p.projection_confidence_min)
+                confidence_reject = effective_conf < effective_confidence_min
                 keep &= ~confidence_reject
+
+        active_rejection_ratio = 0.0
+        if keep.shape[0] > 0:
+            active_rejection_ratio = float(np.count_nonzero(~keep)) / float(keep.shape[0])
+        health_score = projection_health_from_counts(
+            total_points=int(points_all.shape[0]),
+            in_front_points=(
+                int(np.count_nonzero(points_cam_all[:, 2] > 0.0))
+                if points_cam_all is not None and points_cam_all.shape[0]
+                else int(points_selected.shape[0])
+            ),
+            projected_points=int(u.shape[0]),
+            rejection_ratio=active_rejection_ratio,
+        )
 
         result = ProjectionQualityResult(
             keep=keep,
@@ -1031,6 +1100,7 @@ class LidarProjector:
             runtime_rasterize_ms=runtime_rasterize_ms,
             runtime_depth_edge_ms=runtime_depth_edge_ms,
             runtime_occlusion_ms=runtime_occlusion_ms,
+            projection_health_score=health_score,
         )
 
         # --- Overlay export ---

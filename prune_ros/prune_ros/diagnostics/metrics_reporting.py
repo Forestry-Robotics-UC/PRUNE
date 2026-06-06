@@ -8,7 +8,7 @@ from typing import Any, Optional
 import rospy
 
 from .experiment_metrics import FrameMetrics, MetricsCsvLogger
-from ..projection.lidar_projector import GateMetrics
+from ..projection.lidar_projector import GateMetrics, projection_health_from_counts
 
 
 class MetricsReporter:
@@ -57,6 +57,31 @@ class MetricsReporter:
         )
         num_rejected_other = max(0, projected - int(num_output_points) - known_rejected)
         output_retention_ratio = float(num_output_points) / max(projected, 1)
+        input_points = max(int(num_input_points), 1)
+        in_front = int(projection_metrics.num_points_in_front)
+        projection_projected_ratio = float(projected) / float(input_points)
+        projection_in_front_ratio = float(in_front) / float(input_points)
+        projection_in_image_ratio = float(projected) / float(max(in_front, 1))
+        projection_invalid_mask_hit_ratio = float(projection_metrics.num_would_hit_invalid_mask) / float(max(projected, 1))
+        projection_confidence_rejection_ratio = float(projection_metrics.num_rejected_confidence) / float(max(projected, 1))
+        projection_depth_edge_rejection_ratio = float(projection_metrics.num_rejected_depth_edge) / float(max(projected, 1))
+        projection_occlusion_rejection_ratio = float(projection_metrics.num_rejected_occlusion) / float(max(projected, 1))
+        num_projection_rejected = known_rejected + num_rejected_other
+        num_projection_accepted = int(num_output_points)
+        num_projection_suppressed = max(0, projected - num_projection_accepted)
+        projection_health_score = projection_health_from_counts(
+            total_points=int(num_input_points),
+            in_front_points=in_front,
+            projected_points=projected,
+            rejection_ratio=max(
+                projection_invalid_mask_hit_ratio,
+                projection_confidence_rejection_ratio,
+                projection_depth_edge_rejection_ratio,
+                projection_occlusion_rejection_ratio,
+            ),
+        )
+        if projection_metrics.projection_health_score > 0.0:
+            projection_health_score = float(projection_metrics.projection_health_score)
         self._node._metrics_logger.write(
             FrameMetrics(
                 bag_name=self._node.experiment_bag_name or "unknown_bag",
@@ -90,6 +115,17 @@ class MetricsReporter:
                 would_hit_depth_edge_ratio=float(projection_metrics.num_would_hit_depth_edge) / max(projected, 1),
                 num_would_fail_occlusion=int(projection_metrics.num_would_fail_occlusion),
                 would_fail_occlusion_ratio=float(projection_metrics.num_would_fail_occlusion) / max(projected, 1),
+                projection_projected_ratio=projection_projected_ratio,
+                projection_in_front_ratio=projection_in_front_ratio,
+                projection_in_image_ratio=projection_in_image_ratio,
+                projection_invalid_mask_hit_ratio=projection_invalid_mask_hit_ratio,
+                projection_confidence_rejection_ratio=projection_confidence_rejection_ratio,
+                projection_depth_edge_rejection_ratio=projection_depth_edge_rejection_ratio,
+                projection_occlusion_rejection_ratio=projection_occlusion_rejection_ratio,
+                projection_health_score=projection_health_score,
+                num_projection_suppressed=num_projection_suppressed,
+                num_projection_rejected=num_projection_rejected,
+                num_projection_accepted=num_projection_accepted,
             )
         )
 

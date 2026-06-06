@@ -95,6 +95,17 @@ class ExperimentMetricsTests(unittest.TestCase):
                     would_hit_depth_edge_ratio=0.06,
                     num_would_fail_occlusion=4,
                     would_fail_occlusion_ratio=0.08,
+                    projection_projected_ratio=0.5,
+                    projection_in_front_ratio=0.8,
+                    projection_in_image_ratio=0.625,
+                    projection_invalid_mask_hit_ratio=0.1,
+                    projection_confidence_rejection_ratio=0.04,
+                    projection_depth_edge_rejection_ratio=0.06,
+                    projection_occlusion_rejection_ratio=0.08,
+                    projection_health_score=0.86,
+                    num_projection_suppressed=15,
+                    num_projection_rejected=15,
+                    num_projection_accepted=35,
                 )
             )
             logger.close()
@@ -107,6 +118,8 @@ class ExperimentMetricsTests(unittest.TestCase):
             self.assertEqual(rows[0]["bag_name"], "bag_a")
             self.assertEqual(rows[0]["variant_name"], "full")
             self.assertEqual(rows[0]["num_would_hit_invalid_mask"], "5")
+            self.assertEqual(rows[0]["projection_health_score"], "0.86")
+            self.assertEqual(rows[0]["num_projection_accepted"], "35")
 
     def test_summarize_metrics_file_writes_summary_csv_and_json(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,6 +143,17 @@ class ExperimentMetricsTests(unittest.TestCase):
                         "num_would_hit_invalid_mask": 6,
                         "num_would_hit_depth_edge": 8,
                         "num_would_fail_occlusion": 2,
+                        "projection_projected_ratio": 0.5,
+                        "projection_in_front_ratio": 0.8,
+                        "projection_in_image_ratio": 0.625,
+                        "projection_invalid_mask_hit_ratio": 0.12,
+                        "projection_confidence_rejection_ratio": 0.0,
+                        "projection_depth_edge_rejection_ratio": 0.0,
+                        "projection_occlusion_rejection_ratio": 0.0,
+                        "projection_health_score": 0.88,
+                        "num_projection_suppressed": 5,
+                        "num_projection_rejected": 5,
+                        "num_projection_accepted": 45,
                     },
                     {
                         "bag_name": "bag_a",
@@ -154,7 +178,10 @@ class ExperimentMetricsTests(unittest.TestCase):
             self.assertEqual(summary["p95_runtime_total_ms"], 19.5)
             self.assertTrue((metrics_path.parent / "summary.csv").exists())
             with (metrics_path.parent / "summary.json").open(encoding="utf-8") as handle:
-                self.assertEqual(json.load(handle)["mean_output_points"], 45.0)
+                summary_json = json.load(handle)
+                self.assertEqual(summary_json["mean_output_points"], 45.0)
+                self.assertEqual(summary_json["mean_projection_health_score"], 0.88)
+                self.assertEqual(summary_json["mean_projection_projected_ratio"], 0.5)
 
     def test_write_results_tables_aggregates_variants(self):
         with tempfile.TemporaryDirectory() as tmp:

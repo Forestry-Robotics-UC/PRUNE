@@ -41,6 +41,14 @@ overlay_output_dir: ""         # empty=disabled; set to save 3-layer GIMP overla
 overlay_output_stride: 20      # save overlay every Nth accepted frame
 overlay_dot_radius: 2          # LiDAR dot radius in pixels
 
+# Projection-health adaptive hooks. Disabled by default so PRUNE output remains backward-compatible.
+enable_adaptive_projection_health: false        # if true, tighten projection gates when projection-health diagnostics are bad
+projection_health_warn_threshold: 0.50          # health score below this value should be treated as warning quality in metrics/log review
+projection_health_bad_threshold: 0.25           # health score below this value activates adaptive conservative gates when enabled
+adaptive_confidence_threshold_offset: 0.10      # confidence threshold offset added on bad projection health
+adaptive_depth_edge_threshold_scale: 0.80       # depth-edge threshold scale on bad projection health; values below 1 reject more edge-near points
+adaptive_prefer_suppression_on_bad_health: true # prefer label suppression over geometry deletion where the active PRUNE path supports it
+
 enable_profiling: false
 
 ply_output_dir: ""             # empty uses <prune_ros>/output/ply; used by ~save_ply / ~set_ply_recording

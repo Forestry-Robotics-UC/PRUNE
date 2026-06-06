@@ -53,6 +53,17 @@ SUMMARY_FIELDS = [
     "mean_would_hit_invalid_mask",
     "mean_would_hit_depth_edge",
     "mean_would_fail_occlusion",
+    "mean_projection_projected_ratio",
+    "mean_projection_in_front_ratio",
+    "mean_projection_in_image_ratio",
+    "mean_projection_invalid_mask_hit_ratio",
+    "mean_projection_confidence_rejection_ratio",
+    "mean_projection_depth_edge_rejection_ratio",
+    "mean_projection_occlusion_rejection_ratio",
+    "mean_projection_health_score",
+    "mean_projection_suppressed",
+    "mean_projection_rejected",
+    "mean_projection_accepted",
 ]
 
 
@@ -91,6 +102,17 @@ class FrameMetrics:
     would_hit_depth_edge_ratio: float = 0.0
     num_would_fail_occlusion: int = 0
     would_fail_occlusion_ratio: float = 0.0
+    projection_projected_ratio: float = 0.0
+    projection_in_front_ratio: float = 0.0
+    projection_in_image_ratio: float = 0.0
+    projection_invalid_mask_hit_ratio: float = 0.0
+    projection_confidence_rejection_ratio: float = 0.0
+    projection_depth_edge_rejection_ratio: float = 0.0
+    projection_occlusion_rejection_ratio: float = 0.0
+    projection_health_score: float = 0.0
+    num_projection_suppressed: int = 0
+    num_projection_rejected: int = 0
+    num_projection_accepted: int = 0
 
     @classmethod
     def fieldnames(cls) -> List[str]:
@@ -185,6 +207,17 @@ def summarize_metrics_rows(rows: Sequence[Mapping[str, object]]) -> Dict[str, ob
         "mean_would_hit_invalid_mask": _mean_field(accepted, "num_would_hit_invalid_mask"),
         "mean_would_hit_depth_edge": _mean_field(accepted, "num_would_hit_depth_edge"),
         "mean_would_fail_occlusion": _mean_field(accepted, "num_would_fail_occlusion"),
+        "mean_projection_projected_ratio": _mean_field(accepted, "projection_projected_ratio"),
+        "mean_projection_in_front_ratio": _mean_field(accepted, "projection_in_front_ratio"),
+        "mean_projection_in_image_ratio": _mean_field(accepted, "projection_in_image_ratio"),
+        "mean_projection_invalid_mask_hit_ratio": _mean_field(accepted, "projection_invalid_mask_hit_ratio"),
+        "mean_projection_confidence_rejection_ratio": _mean_field(accepted, "projection_confidence_rejection_ratio"),
+        "mean_projection_depth_edge_rejection_ratio": _mean_field(accepted, "projection_depth_edge_rejection_ratio"),
+        "mean_projection_occlusion_rejection_ratio": _mean_field(accepted, "projection_occlusion_rejection_ratio"),
+        "mean_projection_health_score": _mean_field(accepted, "projection_health_score"),
+        "mean_projection_suppressed": _mean_field(accepted, "num_projection_suppressed"),
+        "mean_projection_rejected": _mean_field(accepted, "num_projection_rejected"),
+        "mean_projection_accepted": _mean_field(accepted, "num_projection_accepted"),
     }
     return _round_summary(summary)
 
