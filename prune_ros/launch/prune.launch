@@ -1,4 +1,28 @@
 <launch>
+  <arg name="use_sim_time" default="false"/>
+  <arg name="play_bag" default="false"/>
+  <arg name="bag_path" default=""/>
+  <arg name="bag_path_extra" default=""/>
+  <arg name="rate" default="1.0"/>
+  <arg name="start_sec" default="0.0"/>
+  <arg name="duration_sec" default=""/>
+  <arg name="pause" default="false"/>
+  <arg name="loop" default="false"/>
+  <arg name="relay_bag_tf" default="true"/>
+  <arg name="bag_tf_topic" default="/tf_bag"/>
+  <arg name="bag_tf_static_topic" default="/tf_static_bag"/>
+  <arg name="use_urdf" default="false"/>
+  <arg name="urdf_path" default=""/>
+  <arg name="rviz" default="false"/>
+  <arg name="rviz_config" default=""/>
+  <arg name="publish_localization_tf" default="false"/>
+  <arg name="localization_topic" default="/localization"/>
+  <arg name="localization_type" default="odom"/>
+  <arg name="localization_parent_frame" default="odom"/>
+  <arg name="localization_child_frame" default="base_link"/>
+  <arg name="localization_stamp_source_topic" default=""/>
+  <arg name="localization_stamp_source_type" default="image"/>
+  <arg name="localization_stamp_source_max_age_sec" default="0.05"/>
   <!-- Tri-state: empty means do not override YAML; set to true/false to override. -->
   <arg name="debug" default=""/>
   <arg name="use_republish" default="false"/>
@@ -30,6 +54,61 @@
   <arg name="projection_reject_depth_edges" default=""/>
   <arg name="projection_occlusion_epsilon_m" default=""/>
   <arg name="projection_occlusion_radius_px" default=""/>
+
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <group if="$(arg play_bag)">
+    <group if="$(arg relay_bag_tf)">
+      <node pkg="topic_tools" type="relay" name="tf_bag_relay"
+            args="$(arg bag_tf_topic) /tf"
+            launch-prefix="bash -c 'sleep 2 &amp;&amp; exec $0 $@' --"/>
+      <node pkg="topic_tools" type="relay" name="tf_static_bag_relay"
+            args="$(arg bag_tf_static_topic) /tf_static"
+            launch-prefix="bash -c 'sleep 2 &amp;&amp; exec $0 $@' --"/>
+    </group>
+    <!-- Four variants to avoid unsupported $(eval) in args attribute. -->
+    <node if="$(eval arg('duration_sec') == '' and not arg('pause') and not arg('loop'))"
+          pkg="rosbag" type="play" name="rosbag_play" output="screen" required="true"
+          args="--clock --rate $(arg rate) --start $(arg start_sec) --delay 4.0
+                $(arg bag_path) $(arg bag_path_extra)"/>
+    <node if="$(eval arg('duration_sec') != '' and not arg('pause') and not arg('loop'))"
+          pkg="rosbag" type="play" name="rosbag_play" output="screen" required="true"
+          args="--clock --rate $(arg rate) --start $(arg start_sec) --duration $(arg duration_sec) --delay 4.0
+                $(arg bag_path) $(arg bag_path_extra)"/>
+    <node if="$(eval arg('duration_sec') == '' and arg('pause') and not arg('loop'))"
+          pkg="rosbag" type="play" name="rosbag_play" output="screen"
+          args="--clock --rate $(arg rate) --start $(arg start_sec) --pause --delay 4.0
+                $(arg bag_path) $(arg bag_path_extra)"/>
+    <node if="$(eval arg('duration_sec') != '' and arg('pause') and not arg('loop'))"
+          pkg="rosbag" type="play" name="rosbag_play" output="screen"
+          args="--clock --rate $(arg rate) --start $(arg start_sec) --duration $(arg duration_sec) --pause --delay 4.0
+                $(arg bag_path) $(arg bag_path_extra)"/>
+  </group>
+
+  <group if="$(arg use_urdf)">
+    <param name="robot_description" command="$(find xacro)/xacro '$(arg urdf_path)'" />
+    <node pkg="robot_state_publisher" type="robot_state_publisher"
+          name="robot_state_publisher" output="screen">
+      <param name="publish_frequency" type="double" value="30.0"/>
+    </node>
+  </group>
+
+  <group if="$(arg publish_localization_tf)">
+    <node pkg="prune_ros" type="pose_to_tf.py" name="localization_to_tf" output="screen">
+      <param name="pose_topic" value="$(arg localization_topic)"/>
+      <param name="input_type" value="$(arg localization_type)"/>
+      <param name="parent_frame" value="$(arg localization_parent_frame)"/>
+      <param name="child_frame" value="$(arg localization_child_frame)"/>
+      <param name="stamp_source_topic" value="$(arg localization_stamp_source_topic)"/>
+      <param name="stamp_source_type" value="$(arg localization_stamp_source_type)"/>
+      <param name="stamp_source_max_age_sec" value="$(arg localization_stamp_source_max_age_sec)"/>
+    </node>
+  </group>
+
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="prune_rviz"
+          args="-d $(arg rviz_config)" output="screen"/>
+  </group>
 
   <rosparam command="load"
             file="$(find prune_ros)/config/core.yaml"
