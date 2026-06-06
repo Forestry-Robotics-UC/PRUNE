@@ -4,13 +4,32 @@
   <arg name="use_republish" default="false"/>
   <arg name="semantic_in_topic" default="/semantic/labels"/>
   <arg name="semantic_topic" default="/semantic/labels"/>
+  <arg name="semantic_input_type" default=""/>
   <arg name="confidence_in_topic" default=""/>
   <arg name="confidence_topic" default=""/>
   <arg name="depth_input_in_topic" default=""/>
   <arg name="depth_input_topic" default="/camera/depth/image_rect_raw"/>
   <arg name="camera_info_txt" default=""/>
   <arg name="camera_frame" default=""/>
+  <arg name="camera_info_topic" default=""/>
   <arg name="output_topic" default="semantic_pointcloud"/>
+  <arg name="target_frame" default=""/>
+  <arg name="dataset_config" default=""/>
+  <arg name="projection_invalid_mask_topic" default=""/>
+  <arg name="projection_invalid_mask_value" default=""/>
+  <arg name="experiment_variant_name" default=""/>
+  <arg name="bag_name" default=""/>
+  <arg name="results_dir" default=""/>
+  <arg name="enable_metrics_csv" default="false"/>
+  <!-- Gate overrides: empty = use YAML value; set to true/false/numeric to override. -->
+  <arg name="use_invalid_mask" default=""/>
+  <arg name="use_depth_edge_rejection" default=""/>
+  <arg name="use_occlusion_gate" default=""/>
+  <arg name="projection_patch_size" default=""/>
+  <arg name="projection_confidence_min" default=""/>
+  <arg name="projection_reject_depth_edges" default=""/>
+  <arg name="projection_occlusion_epsilon_m" default=""/>
+  <arg name="projection_occlusion_radius_px" default=""/>
 
   <rosparam command="load"
             file="$(find prune_ros)/config/core.yaml"
@@ -18,6 +37,10 @@
   <rosparam command="load"
             file="$(find prune_ros)/config/expert.yaml"
             ns="prune_node"/>
+  <rosparam command="load"
+            file="$(arg dataset_config)"
+            ns="prune_node"
+            if="$(eval arg('dataset_config') != '')"/>
 
   <!-- Optional decompression via image_transport (semantic, confidence, depth) -->
   <group if="$(arg use_republish)">
@@ -34,7 +57,40 @@
   <node pkg="prune_ros" type="prune_node.py" name="prune_node" output="screen"
         args="$(eval '_debug:=' + str(arg('debug')).lower() if str(arg('debug')) != '' else '')">
     <remap from="semantic_pointcloud" to="$(arg output_topic)"/>
-    <param name="camera_info_txt" value="$(arg camera_info_txt)"/>
-    <param name="camera_frame" value="$(arg camera_frame)"/>
+    <param name="camera_info_txt" value="$(arg camera_info_txt)"
+           if="$(eval arg('camera_info_txt') != '')"/>
+    <param name="camera_frame" value="$(arg camera_frame)"
+           if="$(eval arg('camera_frame') != '')"/>
+    <param name="semantic_topic" value="$(arg semantic_topic)"
+           if="$(eval arg('semantic_topic') not in ('', '/semantic/labels'))"/>
+    <param name="semantic_input_type" value="$(arg semantic_input_type)"
+           if="$(eval arg('semantic_input_type') != '')"/>
+    <param name="depth_input_topic" value="$(arg depth_input_topic)"
+           if="$(eval arg('depth_input_topic') not in ('', '/camera/depth/image_rect_raw'))"/>
+    <param name="target_frame" value="$(arg target_frame)"
+           if="$(eval arg('target_frame') != '')"/>
+    <param name="projection_invalid_mask_topic" value="$(arg projection_invalid_mask_topic)"
+           if="$(eval arg('projection_invalid_mask_topic') != '')"/>
+    <param name="projection_invalid_mask_value" value="$(arg projection_invalid_mask_value)"
+           if="$(eval arg('projection_invalid_mask_value') != '')"/>
+    <param name="experiment_variant_name" value="$(arg experiment_variant_name)"
+           if="$(eval arg('experiment_variant_name') != '')"/>
+    <param name="bag_name" value="$(arg bag_name)"
+           if="$(eval arg('bag_name') != '')"/>
+    <param name="results_dir" value="$(arg results_dir)"
+           if="$(eval arg('results_dir') != '')"/>
+    <param name="enable_metrics_csv" value="$(arg enable_metrics_csv)"/>
+    <!-- Gate overrides applied only when the arg is non-empty. -->
+    <group if="$(eval arg('use_invalid_mask') != '')">
+      <param name="use_invalid_mask" value="$(arg use_invalid_mask)"/>
+      <param name="use_depth_edge_rejection" value="$(arg use_depth_edge_rejection)"/>
+      <param name="use_occlusion_gate" value="$(arg use_occlusion_gate)"/>
+      <param name="projection_patch_size" value="$(arg projection_patch_size)"/>
+      <param name="projection_confidence_min" value="$(arg projection_confidence_min)"/>
+      <param name="projection_reject_depth_edges" value="$(arg projection_reject_depth_edges)"/>
+      <param name="projection_occlusion_epsilon_m" value="$(arg projection_occlusion_epsilon_m)"/>
+      <param name="projection_occlusion_radius_px" value="$(arg projection_occlusion_radius_px)"
+             if="$(eval arg('projection_occlusion_radius_px') != '')"/>
+    </group>
   </node>
 </launch>
