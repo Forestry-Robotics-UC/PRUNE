@@ -44,6 +44,29 @@ python tools/diagnostics/rosbag_time_skew.py /data/bags /camera/image /os_cloud_
 - If a topic has no valid header stamps, the script exits with an error.
 - This tool is descriptive only; it does not rewrite bag timestamps.
 
+## ICNF Validation Report
+
+Primary utilities:
+- `tools/validation/icnf_report.py`
+- `tools/validation/validate_bag_workflow.py` (compatibility wrapper)
+
+The report inspects already-generated PRUNE results directories. It does not
+launch ROS or replay bags. It writes:
+- `icnf_validation_report.json`
+- `icnf_validation_report.txt`
+
+Usage:
+```bash
+python tools/validation/icnf_report.py --results-dir results/bag_a/full
+```
+
+Compatibility usage:
+```bash
+python tools/validation/validate_bag_workflow.py --results-dir results/bag_a/full
+```
+
+The report reuses the existing per-frame metrics CSV and summary helpers, then checks sync/pair timing, projection output, invalid-mask rejection, depth-edge rejection, occlusion rejection, confidence-threshold evidence when present, suppression vs filtering, and diagnostic counters/runtimes.
+
 ## Results / Ablation Tools
 
 Ablation-result utilities live under `tools/results/`.

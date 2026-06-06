@@ -34,12 +34,11 @@ python3 -c "import sys; sys.path.insert(0, '/home/ros/ws/src/prune'); from tools
 # Stage 2: Sync offset analysis
 echo ""
 echo "[Stage 2] Analyzing sync offset..."
-python3 /home/ros/ws/src/prune/tools/validation/validate_bag_workflow.py \
+python3 /home/ros/ws/src/prune/tools/diagnostics/rosbag_time_skew.py \
     "$BAG_PATH" \
-    --config "$CONFIG" \
-    --output-dir "$OUTPUT_DIR" \
-    --replay-duration "$DURATION_SEC" \
-    2>&1 | tee -a "$OUTPUT_DIR/validation.log"
+    /camera/color/image_raw \
+    /ouster/points \
+    > "$OUTPUT_DIR/sync_stats.txt" 2>&1 || true
 
 # Stage 3: Prepare ROS environment
 echo ""
@@ -90,7 +89,6 @@ echo "====== Validation Complete ======"
 echo "Results: $OUTPUT_DIR"
 echo "  - bag_info.txt: Topic summary"
 echo "  - topics.txt: Full topic list"
-echo "  - sync_stats.json: Timestamp offset analysis"
-echo "  - validation.log: Validation script output"
+echo "  - sync_stats.txt: Timestamp offset analysis"
 echo "  - rosbag_play.log: Bag replay log"
 echo "  - prune_node.log: Node output with debug info"

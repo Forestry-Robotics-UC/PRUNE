@@ -244,6 +244,11 @@ pytest -q
     camera_info_txt:=/path/to/camera_info.txt \
     camera_frame:=camera_color_optical_frame
   ```
+- Validate existing ICNF/PRUNE result bundles after a run:
+  ```bash
+  python tools/validation/icnf_report.py --results-dir results/bag_a/full
+  ```
+  This reads `metrics_per_frame.csv` files and writes JSON/text validation summaries beside the results; confidence evidence is reported when present.
 - To decompress compressed topics, set `use_republish:=true` and provide base input topics (no `/compressed` suffix), e.g. `semantic_in_topic:=/segmentation/test`.
 - Choupal bag example (plays bags, republishes `/segmentation/test` from compressed, and loads TF from `/bags/sensor-box.urdf`):
   ```bash

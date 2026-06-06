@@ -25,6 +25,10 @@ install/
 output/
 /results/
 
+# ForestSphere local overlays and dataset-specific launch/config files.
+prune_ros/config/forestsphere/
+prune_ros/launch/forestsphere/
+
 .vscode
 
 .venv*/
