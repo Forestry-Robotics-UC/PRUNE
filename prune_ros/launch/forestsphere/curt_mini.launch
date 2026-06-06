@@ -1,0 +1,112 @@
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="use_urdf" default="true"/>
+  <arg name="play_bag" default="false"/>
+  <arg name="bag_path" default="/bags/2026_03_27_17_02_24__icnf-curt__ros1_chunk_000.bag"/>
+  <arg name="localization_bag" default=""/>
+  <arg name="rate" default="1.0"/>
+  <arg name="start_sec" default="0.0"/>
+  <arg name="duration_sec" default=""/>
+  <arg name="pause" default="false"/>
+  <arg name="loop" default="false"/>
+  <arg name="debug" default="false"/>
+  <arg name="rviz" default="false"/>
+  <arg name="rviz_config" default="$(find prune_ros)/config/forestsphere/curtmini_debug.rviz"/>
+  <arg name="urdf_path" default="$(find prune_ros)/urdf/curtmini/robot.urdf.xacro"/>
+  <arg name="dataset_config" default="$(find prune_ros)/config/forestsphere/icnf_curt_mini.yaml"/>
+  <arg name="camera_topic" default="/camera/color/image_raw"/>
+  <arg name="camera_info_topic" default="/camera/color/camera_info"/>
+  <arg name="camera_info_txt" default="$(find prune_ros)/config/forestsphere/curt_mini_realsense_camera_info_720p.txt"/>
+  <arg name="camera_frame" default="camera_color_optical_frame"/>
+  <arg name="lidar_topic" default="/ouster/points"/>
+  <arg name="projection_invalid_mask_topic" default=""/>
+  <arg name="projection_invalid_mask_value" default=""/>
+  <arg name="target_frame" default="base_link"/>
+  <arg name="output_topic" default="/ouster/rgb_colored"/>
+  <arg name="experiment_variant_name" default=""/>
+  <arg name="bag_name" default=""/>
+  <arg name="results_dir" default=""/>
+  <arg name="enable_metrics_csv" default="false"/>
+  <arg name="use_invalid_mask" default=""/>
+  <arg name="use_depth_edge_rejection" default=""/>
+  <arg name="use_occlusion_gate" default=""/>
+  <arg name="projection_patch_size" default=""/>
+  <arg name="projection_confidence_min" default=""/>
+  <arg name="projection_reject_depth_edges" default=""/>
+  <arg name="projection_occlusion_epsilon_m" default=""/>
+  <arg name="projection_occlusion_radius_px" default=""/>
+  <arg name="publish_localization_tf" default="true"/>
+  <arg name="localization_topic" default="/localization_50hz"/>
+  <arg name="localization_type" default="odom"/>
+  <arg name="localization_parent_frame" default="odom"/>
+  <arg name="localization_child_frame" default="base_link"/>
+  <arg name="localization_stamp_source_topic" default="$(arg camera_topic)"/>
+  <arg name="localization_stamp_source_type" default="image"/>
+  <arg name="localization_stamp_source_max_age_sec" default="0.05"/>
+  <arg name="run_ufomap" default="true"/>
+  <arg name="ufomap_pkg" default="ufomap_mapping"/>
+  <arg name="ufomap_depth_levels" default="16"/>
+  <arg name="ufomap_num_workers" default="2"/>
+  <arg name="ufomap_color" default="true"/>
+  <arg name="ufomap_resolution" default="0.05"/>
+  <arg name="ufomap_max_range" default="25.0"/>
+  <arg name="ufomap_update_rate" default="20.0"/>
+  <arg name="ufomap_pub_rate" default="5.0"/>
+
+  <include file="$(find prune_ros)/launch/prune.launch" pass_all_args="true">
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="play_bag" value="$(arg play_bag)"/>
+    <arg name="bag_path" value="$(arg bag_path)"/>
+    <arg name="bag_path_extra" value="$(arg localization_bag)"/>
+    <arg name="rate" value="$(arg rate)"/>
+    <arg name="start_sec" value="$(arg start_sec)"/>
+    <arg name="duration_sec" value="$(arg duration_sec)"/>
+    <arg name="pause" value="$(arg pause)"/>
+    <arg name="loop" value="$(arg loop)"/>
+    <arg name="use_urdf" value="$(arg use_urdf)"/>
+    <arg name="debug" value="$(arg debug)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="rviz_config" value="$(arg rviz_config)"/>
+    <arg name="urdf_path" value="$(arg urdf_path)"/>
+    <arg name="dataset_config" value="$(arg dataset_config)"/>
+    <arg name="semantic_topic" value="$(arg camera_topic)"/>
+    <arg name="semantic_input_type" value="rgb"/>
+    <arg name="camera_info_topic" value="$(arg camera_info_topic)"/>
+    <arg name="camera_info_txt" value="$(arg camera_info_txt)"/>
+    <arg name="camera_frame" value="$(arg camera_frame)"/>
+    <arg name="depth_input_topic" value="$(arg lidar_topic)"/>
+    <arg name="projection_invalid_mask_topic" value="$(arg projection_invalid_mask_topic)"/>
+    <arg name="projection_invalid_mask_value" value="$(arg projection_invalid_mask_value)"/>
+    <arg name="target_frame" value="$(arg target_frame)"/>
+    <arg name="output_topic" value="$(arg output_topic)"/>
+    <arg name="experiment_variant_name" value="$(arg experiment_variant_name)"/>
+    <arg name="bag_name" value="$(arg bag_name)"/>
+    <arg name="results_dir" value="$(arg results_dir)"/>
+    <arg name="enable_metrics_csv" value="$(arg enable_metrics_csv)"/>
+    <arg name="use_invalid_mask" value="$(arg use_invalid_mask)"/>
+    <arg name="use_depth_edge_rejection" value="$(arg use_depth_edge_rejection)"/>
+    <arg name="use_occlusion_gate" value="$(arg use_occlusion_gate)"/>
+    <arg name="projection_patch_size" value="$(arg projection_patch_size)"/>
+    <arg name="projection_confidence_min" value="$(arg projection_confidence_min)"/>
+    <arg name="projection_reject_depth_edges" value="$(arg projection_reject_depth_edges)"/>
+    <arg name="projection_occlusion_epsilon_m" value="$(arg projection_occlusion_epsilon_m)"/>
+    <arg name="projection_occlusion_radius_px" value="$(arg projection_occlusion_radius_px)"/>
+    <arg name="publish_localization_tf" value="$(arg publish_localization_tf)"/>
+    <arg name="localization_topic" value="$(arg localization_topic)"/>
+    <arg name="localization_type" value="$(arg localization_type)"/>
+    <arg name="localization_parent_frame" value="$(arg localization_parent_frame)"/>
+    <arg name="localization_child_frame" value="$(arg localization_child_frame)"/>
+    <arg name="localization_stamp_source_topic" value="$(arg localization_stamp_source_topic)"/>
+    <arg name="localization_stamp_source_type" value="$(arg localization_stamp_source_type)"/>
+    <arg name="localization_stamp_source_max_age_sec" value="$(arg localization_stamp_source_max_age_sec)"/>
+    <arg name="run_ufomap" value="$(arg run_ufomap)"/>
+    <arg name="ufomap_pkg" value="$(arg ufomap_pkg)"/>
+    <arg name="ufomap_depth_levels" value="$(arg ufomap_depth_levels)"/>
+    <arg name="ufomap_num_workers" value="$(arg ufomap_num_workers)"/>
+    <arg name="ufomap_color" value="$(arg ufomap_color)"/>
+    <arg name="ufomap_resolution" value="$(arg ufomap_resolution)"/>
+    <arg name="ufomap_max_range" value="$(arg ufomap_max_range)"/>
+    <arg name="ufomap_update_rate" value="$(arg ufomap_update_rate)"/>
+    <arg name="ufomap_pub_rate" value="$(arg ufomap_pub_rate)"/>
+  </include>
+</launch>

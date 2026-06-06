@@ -1,0 +1,134 @@
+# ICNF Dataset Configuration for Curt Mini Robot
+# Sensor Fusion: LiDAR + RGB Projection with Sky Masking
+#
+# Dataset: /media/duda/t7_shield/ICNF/
+# Robot: curt-mini from forestsphere branch
+# Format: ROS1 rosbag chunks
+#
+# Pipeline:
+#   1. Perception: Detects sky pixels (ResNet50), outputs /semantic/projection_invalid_mask
+#   2. Fusion: Projects LiDAR onto /camera/color/image_raw, rejects sky pixels
+#   3. Output: /semantic_pointcloud with RGB colors (sky masked out)
+
+# ============================================================================
+# RGB IMAGE INPUT (NOT semantic labels)
+# ============================================================================
+semantic_topic: "/camera/color/image_raw"       # RGB from RealSense (direct colors)
+semantic_input_type: "rgb"                      # Use RGB mode (3/4-channel color image)
+projection_invalid_mask_topic: "/semantic/projection_invalid_mask"  # Sky mask from Perception
+projection_invalid_mask_value: 255              # Pixel value 255 = sky (invalid)
+
+# ============================================================================
+# CAMERA INTRINSICS
+# ============================================================================
+camera_info: ""                          # Leave empty (use camera_info_txt instead)
+camera_info_txt: ""                      # Set via launch file with proper path expansion
+camera_frame: "camera_color_optical_frame"
+undistort_semantic: true                 # Bag's camera_info is factory default (uncalibrated); txt file has real D
+undistort_alpha: 1.0                     # Keep all pixels; new_k preserves scale close to original
+
+# ============================================================================
+# GEOMETRY INPUT (LiDAR)
+# ============================================================================
+depth_input_topic: "/ouster/points"       # LiDAR PointCloud2 topic
+mode: "lidar"                            # Force LiDAR mode (ignore depth Image)
+
+# ============================================================================
+# FRAME TRANSFORMS
+# ============================================================================
+target_frame: "base_link"                # Output frame for semantic point cloud
+# Static extrinsics (use these OR rely on TF/URDF; TF takes precedence if provided):
+# static_target_T_lidar: [...]           # row-major 4x4, if no TF available
+# static_camera_T_lidar: [...]           # row-major 4x4, if no TF available
+
+# ============================================================================
+# DEPTH/LIDAR FILTERING
+# ============================================================================
+max_depth_m: 25.0                        # Drop points beyond 50m (off-road robustness)
+include_unlabeled_pts: false             # Drop points projecting outside image (clean output)
+
+# ============================================================================
+# TEMPORAL SYNCHRONIZATION
+# ============================================================================
+sync_slop_sec: 0.1                       # 100ms tolerance for ICNF bag timestamps
+pair_max_dt_sec: 0.15                   # Hard gate: drop pairs with |Δt| > 150ms
+sync_queue_size: 30                      # Queue depth for sync buffer
+
+# ============================================================================
+# ROBUST SAMPLING (LiDAR Projection)
+# ============================================================================
+# Patch-based label voting around each projected pixel
+# 1=single pixel, 3=3x3 patch, 5=5x5, etc.
+# Use 3 or 5 for off-road scenes with occlusion/noise
+projection_patch_size: 5
+
+# ============================================================================
+# OUTPUT
+# ============================================================================
+colorize_labels: true                    # Publish RGB field in output PointCloud2 (uses camera colors)
+# color_map ignored in RGB mode (colors come directly from /camera/color/image_raw)
+
+# ============================================================================
+# RGB SAMPLING
+# ============================================================================
+semantic_color_quantization_step: 1      # No quantization (keep full RGB colors)
+downsample_factor: 2                     # 1=no downsampling, 2=skip every 2nd pixel
+
+# ============================================================================
+# DIAGNOSTICS & DEBUGGING
+# ============================================================================
+debug: false                             # Verbose startup report
+core_debug: false                        # DEBUG logs from fusion algorithm
+status_period: ""                        # Auto (disabled unless debug=true)
+
+# Online calibration health (detects LiDAR-camera misalignment)
+online_calibration_enable: false
+online_calibration_every_n_frames: 30    # Update every 30 frames (~1Hz at 30fps)
+online_calibration_max_points: 5000      # Subsample large frames
+online_calibration_step_deg: 0.5         # Try ±0.5° rotation corrections
+online_calibration_learning_rate: 0.01
+online_calibration_max_correction_deg: 5.0  # Safety clamp
+online_calibration_min_observability: 0.3   # Require good geometry
+online_calibration_min_fov_points: 100      # Require 100+ projected points
+
+# Tracked reprojection diagnostic (stresses LiDAR edge alignment)
+tracked_reprojection_enable: false
+tracked_reprojection_fb_thresh_px: 2.0
+tracked_reprojection_depth_edge_thresh: 0.1
+tracked_reprojection_min_image_edge: 0.05
+tracked_reprojection_min_tracks: 50
+
+# Debug overlays (LiDAR projection visualization)
+debug_project_lidar: false               # Set true to see projected points
+debug_output_dir: "prune_ros/output/debug"
+debug_output_stride: 10                  # Save every 10th frame
+
+# ============================================================================
+# TIMESTAMPS & CLOUD METADATA
+# ============================================================================
+cloud_stamp_source: "midpoint"           # Use midpoint of semantic/lidar timestamps
+cloud_time_offset_sec: 0.0               # No offset
+
+# ============================================================================
+# PLY EXPORT (for offline validation)
+# ============================================================================
+ply_output_dir: "/tmp/entfac_fusion_ply" # Writable inside both ros and fruc-docker container users
+ply_target_frame: ""                     # Use target_frame
+ply_tf_use_latest: false                 # Exact-time TF lookup only
+ply_tf_tolerance_sec: 0.1
+ply_recording_enable: true               # Record PLY files for all messages at startup
+
+# Services:
+#   rosservice call /prune_node/save_ply "{}"  # Save last cloud
+#   rosservice call /prune_node/set_ply_recording "data: true"
+#   rosservice call /prune_node/set_ply_recording "data: false"
+
+# ============================================================================
+# PERFORMANCE TUNING
+# ============================================================================
+perception_invalid_label: 65535          # Sentinel from ENTFAC Perception for low-confidence
+
+# ROS node callback tuning (keep defaults unless CPU-bound):
+enable_profiling: false                  # cProfile per callback (off by default)
+
+# For Jetson/ARM: try downsample_factor: 2 or 4

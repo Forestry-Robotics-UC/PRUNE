@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Configuration -->
+  <arg name="use_sim_time" default="true"/>
+  <arg name="run_ufomap" default="true"/>
+  <arg name="rviz" default="false"/>
+  <arg name="debug" default="false"/>
+  <arg name="core_debug" default="false"/>
+
+  <!-- Paths -->
+  <arg name="urdf_path" default="$(find prune_ros)/urdf/curtmini/robot.urdf.xacro"/>
+  <arg name="dataset_config" default="$(find prune_ros)/config/forestsphere/icnf_curt_mini.yaml"/>
+  <arg name="camera_info_txt" default=""/>
+  <arg name="camera_frame" default=""/>
+
+  <!-- Localization -->
+  <arg name="localization_topic" default="/localization_50hz"/>
+  <arg name="localization_yaw_offset_deg" default="0.0"/>
+  <arg name="localization_stamp_source_topic" default="/camera/color/image_raw"/>
+  <arg name="run_mapir_ndvi_colorizer" default="false"/>
+  <arg name="mapir_ndvi_input_topic" default="/mapir/image_raw"/>
+  <arg name="mapir_ndvi_output_topic" default="/mapir/ndvi_color"/>
+  <arg name="mapir_ndvi_vignette_dir" default="$(find prune_ros)/config/mapir/vignette"/>
+
+  <!-- UFOMap config -->
+  <arg name="ufomap_resolution" default="0.05"/>
+  <arg name="ufomap_depth_levels" default="16"/>
+  <arg name="ufomap_num_workers" default="2"/>
+  <arg name="ufomap_color" default="true"/>
+  <arg name="ufomap_max_range" default="25.0"/>
+  <arg name="ufomap_update_rate" default="20.0"/>
+  <arg name="ufomap_pub_rate" default="5.0"/>
+
+  <!-- Global parameters -->
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <!-- URDF + robot_state_publisher -->
+  <param name="robot_description" command="$(find xacro)/xacro $(arg urdf_path)"/>
+  <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher" output="screen">
+    <param name="publish_frequency" type="double" value="30.0"/>
+  </node>
+
+  <!-- Localization → TF -->
+  <node pkg="prune_ros" type="pose_to_tf.py" name="localization_to_tf" output="screen">
+    <param name="pose_topic" value="$(arg localization_topic)"/>
+    <param name="input_type" value="odom"/>
+    <param name="parent_frame" value="odom"/>
+    <param name="child_frame" value="base_link"/>
+    <param name="stamp_source_topic" value="$(arg localization_stamp_source_topic)"/>
+    <param name="stamp_source_type" value="image"/>
+    <param name="stamp_source_max_age_sec" value="0.05"/>
+    <param name="yaw_offset_deg" value="$(arg localization_yaw_offset_deg)"/>
+  </node>
+
+  <!-- Static map → odom transform -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="map_to_odom"
+        args="0 0 0 0 0 0 1 map odom"/>
+
+  <!-- Colored PCL Fusion Node -->
+  <rosparam command="load" file="$(find prune_ros)/config/core.yaml" ns="prune_node"/>
+  <rosparam command="load" file="$(find prune_ros)/config/expert.yaml" ns="prune_node"/>
+  <rosparam command="load" file="$(arg dataset_config)" ns="prune_node"/>
+
+  <param name="prune_node/target_frame" value="base_link"/>
+  <param name="prune_node/core_debug" value="$(arg core_debug)"/>
+  <group if="$(eval arg('camera_info_txt') != '')">
+    <param name="prune_node/camera_info_txt" value="$(arg camera_info_txt)"/>
+  </group>
+  <group if="$(eval arg('camera_frame') != '')">
+    <param name="prune_node/camera_frame" value="$(arg camera_frame)"/>
+  </group>
+
+  <node pkg="prune_ros" type="prune_node.py" name="prune_node" output="screen">
+    <remap from="semantic_pointcloud" to="/semantic_pointcloud"/>
+  </node>
+
+  <group if="$(arg run_mapir_ndvi_colorizer)">
+    <node pkg="prune_ros" type="mapir_ndvi_colorizer.py" name="mapir_ndvi_colorizer" output="screen">
+      <param name="input_topic" value="$(arg mapir_ndvi_input_topic)"/>
+      <param name="output_topic" value="$(arg mapir_ndvi_output_topic)"/>
+      <param name="vignette_dir" value="$(arg mapir_ndvi_vignette_dir)"/>
+    </node>
+  </group>
+
+  <!-- UFOMap -->
+  <group if="$(arg run_ufomap)">
+    <node pkg="ufomap_mapping" type="ufomap_mapping_server_node" name="ufomap_mapping_server_node" output="screen">
+      <param name="resolution" value="$(arg ufomap_resolution)"/>
+      <param name="depth_levels" value="$(arg ufomap_depth_levels)"/>
+      <param name="num_workers" value="$(arg ufomap_num_workers)"/>
+      <param name="color_map" value="$(arg ufomap_color)"/>
+      <param name="max_range" value="$(arg ufomap_max_range)"/>
+      <param name="update_rate" value="$(arg ufomap_update_rate)"/>
+      <param name="pub_rate" value="$(arg ufomap_pub_rate)"/>
+      <param name="verbose" value="true"/>
+      <param name="transform_timeout" value="5.0"/>
+      <remap from="cloud_in" to="/semantic_pointcloud"/>
+    </node>
+  </group>
+
+  <!-- RViz (optional) -->
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz"
+          args="-d $(find prune_ros)/config/forestsphere/curtmini_debug.rviz" output="screen"/>
+  </group>
+
+</launch>

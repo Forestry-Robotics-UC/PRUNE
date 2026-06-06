@@ -1,0 +1,49 @@
+# ren_lines CurtMini config for ablation study (paper results).
+# Same physical CurtMini rig as airfield/icnf, so static extrinsics are identical.
+# Differences from airfield/icnf: compat_ouster_sensor_frame=true and rotation-only
+# deskew, matching the ren_lines semantic-PCL export config (ren_lines_curt_rgb.yaml).
+# Camera is 640x480 (realsense 480p); camera_info comes from the bag's /camera/color/camera_info.
+
+semantic_topic: "/camera/color/image_raw"
+semantic_input_type: "rgb"
+camera_frame: "camera_color_optical_frame"
+depth_input_topic: "/ouster/points"
+target_frame: "base_link"
+mode: "lidar"
+
+max_depth_m: 25.0
+sync_slop_sec: 0.04
+sync_queue_size: 30
+pair_max_dt_sec: 0.05
+
+# compat cancels URDF's pi yaw, giving net yaw=0 for ren_lines (Ouster faces forward on this rig).
+compat_ouster_sensor_frame: true
+
+lidar_deskew_enable: true
+lidar_deskew_mode: "rotation"
+lidar_deskew_ref: "start"
+lidar_imu_topic: "/ouster/imu"
+lidar_imu_cache_size: 2000
+lidar_imu_cache_max_dt_sec: 0.1
+lidar_time_field: "t"
+lidar_time_scale: 1.0e-9
+
+cloud_stamp_source: "end"
+include_unlabeled_pts: false
+colorize_labels: true
+undistort_semantic: true
+undistort_alpha: 0.0
+spin_threads: 2
+
+# Static extrinsics — leave empty so use_urdf:=true provides TF from URDF calibration.
+# static_camera_T_lidar: []
+# static_target_T_lidar: []
+
+# Depth-edge defaults (overridden per variant via launch args)
+projection_reject_depth_edges: false
+projection_depth_edge_thresh: 0.05
+projection_depth_edge_radius_px: 1
+
+# Occlusion defaults (overridden per variant via launch args)
+projection_occlusion_epsilon_m: 0.10
+projection_occlusion_radius_px: 3

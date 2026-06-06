@@ -1,0 +1,15 @@
+# MAPIR Survey3 OCN intrinsic calibration at 1920x1440.
+# Source: mapir-camera-ros2/config/camera_info_mapir3_ocn_1920x1440.yaml
+# Use with camera_info_txt in prune_node (undistort_semantic: false for NDVI).
+# NOTE: Scaled versions needed if bag images are at lower resolution.
+
+frame_id: mapir3_optical_frame
+camera_name: mapir3_ocn
+distortion_model: plumb_bob
+image_width: 1920
+image_height: 1440
+
+D = [0.037530, -0.052489, 0.001197, -0.000132, 0.0]
+K = [1382.674326, 0.0, 884.649632, 0.0, 1385.540533, 715.781224, 0.0, 0.0, 1.0]
+R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+P = [1389.696167, 0.0, 882.901945, 0.0, 0.0, 1393.989014, 716.749230, 0.0, 0.0, 0.0, 1.0, 0.0]

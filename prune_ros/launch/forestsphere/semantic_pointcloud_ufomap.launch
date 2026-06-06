@@ -1,0 +1,104 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="play_bag" default="true"/>
+  <arg name="bag_path" default=""/>
+  <arg name="localization_bag" default=""/>
+  <arg name="rate" default="1.0"/>
+  <arg name="rosbag_skip_empty_sec" default="0"/>
+  <arg name="start_sec" default="0.0"/>
+  <arg name="semantic_topic" default="/semantic_pointcloud"/>
+  <arg name="localization_topic" default="/localization_50hz"/>
+  <arg name="localization_type" default="odom"/>
+  <arg name="localization_parent_frame" default="odom"/>
+  <arg name="localization_child_frame" default="base_link"/>
+  <arg name="localization_yaw_offset_deg" default="0.0"/>
+  <arg name="localization_use_stamp_source" default="false"/>
+  <arg name="localization_stamp_source_topic" default="/semantic_pointcloud"/>
+  <arg name="localization_stamp_source_type" default="pointcloud2"/>
+  <arg name="localization_stamp_source_max_age_sec" default="0.10"/>
+  <arg name="urdf_path" default="$(find prune_ros)/urdf/curtmini/robot.urdf.xacro"/>
+  <arg name="rviz" default="false"/>
+  <arg name="rviz_config" default="$(find prune_ros)/config/forestsphere/curtmini_debug.rviz"/>
+  <arg name="ufomap_pkg" default="ufomap_mapping"/>
+  <arg name="ufomap_map_frame" default="map"/>
+  <arg name="ufomap_robot_frame" default="base_link"/>
+  <arg name="ufomap_resolution" default="0.10"/>
+  <arg name="ufomap_depth_levels" default="16"/>
+  <arg name="ufomap_num_workers" default="2"/>
+  <arg name="ufomap_color" default="true"/>
+  <arg name="ufomap_max_range" default="25.0"/>
+  <arg name="ufomap_prob_hit" default="0.70"/>
+  <arg name="ufomap_prob_miss" default="0.40"/>
+  <arg name="ufomap_update_rate" default="20.0"/>
+  <arg name="ufomap_pub_rate" default="2.0"/>
+  <arg name="ufomap_transform_timeout" default="10.0"/>
+
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <group if="$(arg play_bag)">
+    <node pkg="rosbag" type="play" name="rosbag_play" output="screen"
+          args="--clock
+                --rate $(arg rate)
+                --skip-empty $(arg rosbag_skip_empty_sec)
+                --start $(arg start_sec)
+                --delay 4.0
+                --topics $(arg localization_topic) $(arg semantic_topic)
+                --bags $(arg localization_bag) $(arg bag_path)"/>
+  </group>
+
+  <param name="robot_description" command="$(find xacro)/xacro '$(arg urdf_path)'"/>
+  <node pkg="robot_state_publisher"
+        type="robot_state_publisher"
+        name="robot_state_publisher"
+        output="screen">
+    <param name="publish_frequency" type="double" value="30.0"/>
+  </node>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="map_to_odom"
+        args="0 0 0 0 0 0 1 map odom"/>
+
+  <node pkg="prune_ros"
+        type="pose_to_tf.py"
+        name="localization_to_tf"
+        output="screen">
+    <param name="pose_topic" value="$(arg localization_topic)"/>
+    <param name="input_type" value="$(arg localization_type)"/>
+    <param name="parent_frame" value="$(arg localization_parent_frame)"/>
+    <param name="child_frame" value="$(arg localization_child_frame)"/>
+    <param name="yaw_offset_deg" value="$(arg localization_yaw_offset_deg)"/>
+    <param name="use_stamp_source" value="$(arg localization_use_stamp_source)"/>
+    <param name="stamp_source_topic" value="$(arg localization_stamp_source_topic)"/>
+    <param name="stamp_source_type" value="$(arg localization_stamp_source_type)"/>
+    <param name="stamp_source_max_age_sec" value="$(arg localization_stamp_source_max_age_sec)"/>
+  </node>
+
+  <node pkg="$(arg ufomap_pkg)"
+        type="ufomap_mapping_server_node"
+        name="ufomap_mapping_server_node"
+        output="screen"
+        required="true">
+    <param name="frame_id" value="$(arg ufomap_map_frame)"/>
+    <param name="robot_frame_id" value="$(arg ufomap_robot_frame)"/>
+    <param name="resolution" value="$(arg ufomap_resolution)"/>
+    <param name="depth_levels" value="$(arg ufomap_depth_levels)"/>
+    <param name="num_workers" value="$(arg ufomap_num_workers)"/>
+    <param name="color_map" value="$(arg ufomap_color)"/>
+    <param name="max_range" value="$(arg ufomap_max_range)"/>
+    <param name="prob_hit" value="$(arg ufomap_prob_hit)"/>
+    <param name="prob_miss" value="$(arg ufomap_prob_miss)"/>
+    <param name="update_rate" value="$(arg ufomap_update_rate)"/>
+    <param name="pub_rate" value="$(arg ufomap_pub_rate)"/>
+    <param name="transform_timeout" value="$(arg ufomap_transform_timeout)"/>
+    <param name="verbose" value="true"/>
+    <remap from="cloud_in" to="$(arg semantic_topic)"/>
+  </node>
+
+  <group if="$(arg rviz)">
+    <node pkg="rviz"
+          type="rviz"
+          name="semantic_ufomap_rviz"
+          args="-d $(arg rviz_config)"
+          output="screen"/>
+  </group>
+</launch>

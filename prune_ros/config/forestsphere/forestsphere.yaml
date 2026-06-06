@@ -1,0 +1,18 @@
+# Forestsphere overrides (project-specific)
+semantic_topic: "/camera/color/image_raw"
+semantic_input_type: "rgb"
+confidence_topic: ""
+camera_info: "/camera/color/camera_info"
+camera_info_txt: ""  # optional calibration file path (used when camera_info topic is unavailable)
+camera_frame: ""  # optional fallback frame_id when camera_info_txt file has no frame_id
+depth_input_topic: "/ouster/points"
+target_frame: "base_link"
+mode: "lidar"
+colorize_labels: true
+undistort_semantic: true
+undistort_alpha: 0.0
+max_depth_m: 50.0
+sync_slop_sec: 0.03
+pair_max_dt_sec: 0.03
+sync_queue_size: 10
+debug_project_lidar: false

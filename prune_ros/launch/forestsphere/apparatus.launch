@@ -1,0 +1,50 @@
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="play_bag" default="false"/>
+  <arg name="bag_path" default="/mnt/t7_shield/ren_inwards.bag"/>
+  <arg name="rate" default="1.0"/>
+  <arg name="start_sec" default="0"/>
+  <arg name="pause" default="false"/>
+  <arg name="loop" default="false"/>
+  <arg name="bag_tf_topic" default="/tf_bag"/>
+  <arg name="bag_tf_static_topic" default="/tf_static_bag"/>
+  <arg name="use_urdf" default="true"/>
+  <arg name="debug" default="false"/>
+  <arg name="rviz" default="false"/>
+  <arg name="rviz_config" default="$(find prune_ros)/config/ren_inwards.rviz"/>
+  <arg name="urdf_path" default="$(find prune_ros)/urdf/apparatus/apparatus.urdf.xacro"/>
+  <arg name="output_topic" default="/ouster/rgb_colored"/>
+  <arg name="run_ufomap" default="false"/>
+  <arg name="ufomap_pkg" default="ufomap_mapping"/>
+  <arg name="ufomap_depth_levels" default="16"/>
+  <arg name="ufomap_num_workers" default="6"/>
+  <arg name="ufomap_color" default="true"/>
+  <arg name="ufomap_resolution" default="0.03"/>
+  <arg name="ufomap_max_range" default="25.0"/>
+
+  <!-- Legacy wrapper retained so older scripts can keep launching ren_inwards.launch. -->
+  <include file="$(find prune_ros)/launch/prune.launch">
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="play_bag" value="$(arg play_bag)"/>
+    <arg name="bag_path" value="$(arg bag_path)"/>
+    <arg name="rate" value="$(arg rate)"/>
+    <arg name="start_sec" value="$(arg start_sec)"/>
+    <arg name="pause" value="$(arg pause)"/>
+    <arg name="loop" value="$(arg loop)"/>
+    <arg name="bag_tf_topic" value="$(arg bag_tf_topic)"/>
+    <arg name="bag_tf_static_topic" value="$(arg bag_tf_static_topic)"/>
+    <arg name="use_urdf" value="$(arg use_urdf)"/>
+    <arg name="debug" value="$(arg debug)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="rviz_config" value="$(arg rviz_config)"/>
+    <arg name="urdf_path" value="$(arg urdf_path)"/>
+    <arg name="output_topic" value="$(arg output_topic)"/>
+    <arg name="run_ufomap" value="$(arg run_ufomap)"/>
+    <arg name="ufomap_pkg" value="$(arg ufomap_pkg)"/>
+    <arg name="ufomap_depth_levels" value="$(arg ufomap_depth_levels)"/>
+    <arg name="ufomap_num_workers" value="$(arg ufomap_num_workers)"/>
+    <arg name="ufomap_color" value="$(arg ufomap_color)"/>
+    <arg name="ufomap_resolution" value="$(arg ufomap_resolution)"/>
+    <arg name="ufomap_max_range" value="$(arg ufomap_max_range)"/>
+  </include>
+</launch>

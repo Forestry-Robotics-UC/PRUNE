@@ -1,0 +1,69 @@
+services:
+  dataset-processing:
+    build:
+      context: .
+      dockerfile: Docker/entfac-sensor-fusion-noetic.Dockerfile
+      args:
+        USERNAME: ${DATASET_USERNAME:-fruc-docker}
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+        UFOMAP_REPO_URL: ${UFOMAP_REPO_URL:-https://github.com/UnknownFreeOccupied/ufomap.git}
+        UFOMAP_REF: ${UFOMAP_REF:-master}
+    image: ros-entfac-dataset:latest
+    container_name: entfac_dataset_processing
+    network_mode: host
+    gpus: all
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      # Read the host X11 cookie from a neutral temp path inside the container.
+      - XAUTHORITY=/tmp/fruc.xauth
+      - DISABLE_ROS1_EOL_WARNINGS=1
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - __NV_PRIME_RENDER_OFFLOAD=${RVIZ_NV_PRIME_RENDER_OFFLOAD:-}
+      - __GLX_VENDOR_LIBRARY_NAME=${RVIZ_GLX_VENDOR_LIBRARY_NAME:-}
+      - QT_XCB_GL_INTEGRATION=${RVIZ_QT_XCB_GL_INTEGRATION:-}
+      - QT_OPENGL=${RVIZ_QT_OPENGL:-desktop}
+      - LIBGL_ALWAYS_SOFTWARE=${RVIZ_LIBGL_ALWAYS_SOFTWARE:-0}
+      - DATASET_ROOT=${DATASET_ROOT:-/mnt/t7_shield}
+      - BAGS_DIR=${BAGS_DIR:-/mnt/t7_shield}
+      # Thread budgets — set before Python imports so BLAS/OpenMP pick them up.
+      # OMP_NUM_THREADS=4 leaves cores free for the ROS spinner + worker thread.
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+  
+    volumes:
+      - ./:/home/${DATASET_USERNAME:-fruc-docker}/ws/src/entfac_fusion:rw
+      - ${BAGS_DIR:-/mnt/t7_shield}:${BAGS_DIR:-/mnt/t7_shield}:rw
+      - ${HOST_DATASETS_DIR:-/path/to/datasets}:/home/${DATASET_USERNAME:-fruc-docker}/datasets:rw
+      - ${HOST_KDRIVE_DIR:-/path/to/kDrive}:/home/${DATASET_USERNAME:-fruc-docker}/kDrive:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Override XAUTHORITY_PATH when the active host cookie is not in $XAUTHORITY.
+      - ${XAUTHORITY_PATH:-${XAUTHORITY:-${HOME:-/root}/.Xauthority}}:/tmp/fruc.xauth:ro
+    working_dir: /home/${DATASET_USERNAME:-fruc-docker}/ws
+    tty: true
+    stdin_open: true
+    restart: "no"
+    command: ["bash"]
+
+  curt-mini-gui:
+    extends:
+      service: dataset-processing
+    container_name: entfac_curt_mini_gui
+    environment:
+      - DATASET_BAG_PATH=${DATASET_BAG_PATH}
+      - DATASET_BAG_PATH_EXTRA=${DATASET_BAG_PATH_EXTRA:-}
+      - FUSION_RUN_UFOMAP=${FUSION_RUN_UFOMAP:-true}
+    command:
+      - roslaunch
+      - prune_ros
+      - curt_mini.launch
+      - play_bag:=true
+      - bag_path:=${DATASET_BAG_PATH}
+      - localization_bag:=${DATASET_BAG_PATH_EXTRA:-}
+      - run_ufomap:=${FUSION_RUN_UFOMAP:-true}
+      - rviz:=true
