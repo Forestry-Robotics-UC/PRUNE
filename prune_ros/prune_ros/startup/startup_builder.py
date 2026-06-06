@@ -8,7 +8,8 @@ from typing import Any
 import rospy
 
 from ..pipelines.camera_model import CameraModel
-from prune_ros.config import ColorConfig, GateConfig, SyncConfig
+from prune_ros.config import ColorConfig, SyncConfig
+from ..config.config_gate import load_gate_config
 from ..pipelines.frame_inputs import FrameInputPreparer
 from ..pipelines.ply_service import PlyRecordingService
 from ..pipelines.semantic_inputs import SemanticInputParser
@@ -87,25 +88,7 @@ class PruneStartupBuilder:
                     num_labels=int(node.num_labels),
                     semantic_color_quantization_step=int(node.semantic_color_quantization_step),
                 ),
-                GateConfig(
-                    projection_patch_size=int(node.projection_patch_size),
-                    projection_confidence_min=float(node.projection_confidence_min),
-                    projection_invalid_mask_topic=str(node.projection_invalid_mask_topic),
-                    projection_invalid_mask_value=int(node.projection_invalid_mask_value),
-                    projection_invalid_mask_dilate_px=int(node.projection_invalid_mask_dilate_px),
-                    projection_occlusion_epsilon_m=float(node.projection_occlusion_epsilon_m),
-                    projection_occlusion_radius_px=int(node.projection_occlusion_radius_px),
-                    projection_reject_depth_edges=bool(node.projection_reject_depth_edges),
-                    projection_depth_edge_thresh=float(node.projection_depth_edge_thresh),
-                    projection_depth_edge_radius_px=int(node.projection_depth_edge_radius_px),
-                    downsample_factor=int(node.downsample_factor),
-                    depth_map_subsample=int(node.depth_map_subsample),
-                    edge_cache_max_age_sec=float(node.edge_cache_max_age_sec),
-                    use_range_image_edges=str(node.use_range_image_edges),
-                    overlay_output_dir=str(node.overlay_output_dir),
-                    overlay_output_stride=int(node.overlay_output_stride),
-                    overlay_dot_radius=int(node.overlay_dot_radius),
-                ),
+                load_gate_config(node),
                 node._log,
             ),
             frame_inputs=FrameInputPreparer(node),
