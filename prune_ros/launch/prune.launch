@@ -159,17 +159,22 @@
     <param name="results_dir" value="$(arg results_dir)"
            if="$(eval arg('results_dir') != '')"/>
     <param name="enable_metrics_csv" value="$(arg enable_metrics_csv)"/>
-    <!-- Gate overrides applied only when the arg is non-empty. -->
-    <group if="$(eval arg('use_invalid_mask') != '')">
-      <param name="use_invalid_mask" value="$(arg use_invalid_mask)"/>
-      <param name="use_depth_edge_rejection" value="$(arg use_depth_edge_rejection)"/>
-      <param name="use_occlusion_gate" value="$(arg use_occlusion_gate)"/>
-      <param name="projection_patch_size" value="$(arg projection_patch_size)"/>
-      <param name="projection_confidence_min" value="$(arg projection_confidence_min)"/>
-      <param name="projection_reject_depth_edges" value="$(arg projection_reject_depth_edges)"/>
-      <param name="projection_occlusion_epsilon_m" value="$(arg projection_occlusion_epsilon_m)"/>
-      <param name="projection_occlusion_radius_px" value="$(arg projection_occlusion_radius_px)"
-             if="$(eval arg('projection_occlusion_radius_px') != '')"/>
-    </group>
+    <!-- Gate overrides: <group> is invalid inside <node> in ROS1; use per-param if= instead. -->
+    <param name="use_invalid_mask" value="$(arg use_invalid_mask)"
+           if="$(eval arg('use_invalid_mask') != '')"/>
+    <param name="use_depth_edge_rejection" value="$(arg use_depth_edge_rejection)"
+           if="$(eval arg('use_depth_edge_rejection') != '')"/>
+    <param name="use_occlusion_gate" value="$(arg use_occlusion_gate)"
+           if="$(eval arg('use_occlusion_gate') != '')"/>
+    <param name="projection_patch_size" value="$(arg projection_patch_size)"
+           if="$(eval arg('projection_patch_size') != '')"/>
+    <param name="projection_confidence_min" value="$(arg projection_confidence_min)"
+           if="$(eval arg('projection_confidence_min') != '')"/>
+    <param name="projection_reject_depth_edges" value="$(arg projection_reject_depth_edges)"
+           if="$(eval arg('projection_reject_depth_edges') != '')"/>
+    <param name="projection_occlusion_epsilon_m" value="$(arg projection_occlusion_epsilon_m)"
+           if="$(eval arg('projection_occlusion_epsilon_m') != '')"/>
+    <param name="projection_occlusion_radius_px" value="$(arg projection_occlusion_radius_px)"
+           if="$(eval arg('projection_occlusion_radius_px') != '')"/>
   </node>
 </launch>
