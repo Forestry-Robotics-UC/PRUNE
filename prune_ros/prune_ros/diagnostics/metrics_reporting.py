@@ -54,6 +54,7 @@ class MetricsReporter:
             + int(projection_metrics.num_rejected_confidence)
             + int(projection_metrics.num_rejected_depth_edge)
             + int(projection_metrics.num_rejected_occlusion)
+            + int(projection_metrics.num_rejected_geometric)
         )
         num_rejected_other = max(0, projected - int(num_output_points) - known_rejected)
         output_retention_ratio = float(num_output_points) / max(projected, 1)
@@ -66,6 +67,7 @@ class MetricsReporter:
         projection_confidence_rejection_ratio = float(projection_metrics.num_rejected_confidence) / float(max(projected, 1))
         projection_depth_edge_rejection_ratio = float(projection_metrics.num_rejected_depth_edge) / float(max(projected, 1))
         projection_occlusion_rejection_ratio = float(projection_metrics.num_rejected_occlusion) / float(max(projected, 1))
+        projection_geometric_rejection_ratio = float(projection_metrics.num_rejected_geometric) / float(max(projected, 1))
         num_projection_rejected = known_rejected + num_rejected_other
         num_projection_accepted = int(num_output_points)
         num_projection_suppressed = max(0, projected - num_projection_accepted)
@@ -78,6 +80,7 @@ class MetricsReporter:
                 projection_confidence_rejection_ratio,
                 projection_depth_edge_rejection_ratio,
                 projection_occlusion_rejection_ratio,
+                projection_geometric_rejection_ratio,
             ),
         )
         if projection_metrics.projection_health_score > 0.0:
@@ -126,6 +129,11 @@ class MetricsReporter:
                 num_projection_suppressed=num_projection_suppressed,
                 num_projection_rejected=num_projection_rejected,
                 num_projection_accepted=num_projection_accepted,
+                num_rejected_geometric=int(projection_metrics.num_rejected_geometric),
+                num_would_hit_geometric=int(projection_metrics.num_would_hit_geometric),
+                would_hit_geometric_ratio=float(projection_metrics.num_would_hit_geometric) / max(projected, 1),
+                projection_geometric_rejection_ratio=projection_geometric_rejection_ratio,
+                runtime_geometric_ms=float(projection_metrics.runtime_geometric_ms),
             )
         )
 

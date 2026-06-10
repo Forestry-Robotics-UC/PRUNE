@@ -36,6 +36,13 @@ Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/co
 | `~downsample_factor` | `int` | `1` | Integer >=1 stride used to subsample images for CPU/ARM targets. |
 | `~enable_profiling` | `bool` | `false` | If true, print a short cProfile summary per callback (future C++/numba profiling hook). |
 | `~filter_invalid_depth` | `bool` | `true` | If true, treat common uint16 depth sentinels (0, 65535) as invalid before scaling. |
+| `~geometric_curvature_max` | `float` | `0.12` | Surface-variation threshold above which a point counts as a 3D surface discontinuity in the geometric reliability gate (0 disables the check). |
+| `~geometric_k_neighbors` | `int` | `12` | Neighbors per point for local surface-normal estimation in the geometric reliability gate. |
+| `~geometric_min_neighbors` | `int` | `5` | Minimum in-radius neighbors required before a normal is trusted; sparser points are marked invalid and never rejected. |
+| `~geometric_radius_m` | `float` | `0.5` | Neighbor distance cap in meters for geometric-gate normal estimation, evaluated in the LiDAR frame. |
+| `~geometric_score_min` | `float` | `0.0` | Geometric reliability score in [0,1] below which a valid point is rejected (0 disables the score criterion). |
+| `~geometric_up_labels` | `str` | `''` | Comma-separated semantic label ids whose surfaces are expected to face up (terrain/trail); empty disables the semantic-normal consistency check. Requires a roughly gravity-aligned ~target_frame. |
+| `~geometric_up_max_angle_deg` | `float` | `60.0` | Maximum angle in degrees between the (unsigned) surface normal and target-frame up for ~geometric_up_labels points to count as consistent. |
 | `~imu_cache_max_dt_sec` | `float` | `0.02` | Max allowed dt (seconds) between semantic frame and IMU for correction. |
 | `~imu_cache_size` | `int` | `2000` | IMU cache size for rolling shutter correction. |
 | `~imu_frame` | `str` | `''` | Optional IMU frame override for rolling shutter correction. |
@@ -66,6 +73,7 @@ Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/co
 | `~projection_confidence_min` | `float` | `0.0` | Minimum patch confidence required to trust transferred image color/label (0 disables). |
 | `~projection_depth_edge_radius_px` | `int` | `0` | Pixel radius used to dilate the LiDAR depth-edge reject mask (helps suppress sky bleed near thin objects). |
 | `~projection_depth_edge_thresh` | `float` | `0.15` | Normalized depth-edge threshold used when ~projection_reject_depth_edges is enabled. |
+| `~projection_geometric_enable` | `bool` | `false` | Enable the GLIM-inspired geometric reliability gate: local surface normals, planarity confidence, 3D surface-discontinuity rejection, and optional semantic-normal consistency. Off by default; existing behavior is unchanged when disabled. |
 | `~projection_invalid_mask_dilate_px` | `int` | `0` | Optional dilation radius in pixels applied to the invalid mask before projection sampling. |
 | `~projection_invalid_mask_topic` | `str` | `''` | Optional single-channel invalid-mask image topic aligned with ~semantic_topic; pixels equal to ~projection_invalid_mask_value reject transferred labels/RGB. |
 | `~projection_invalid_mask_value` | `int` | `255` | Pixel value in ~projection_invalid_mask_topic that marks invalid/rejected samples. |
@@ -100,3 +108,4 @@ Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/co
 | `~tracked_reprojection_quality_level` | `float` | `0.01` | Shi-Tomasi quality level for tracked reprojection feature detection. |
 | `~undistort_alpha` | `float` | `0.0` | Undistort balance/alpha in [0,1]; 0=crop to valid pixels, 1=keep all pixels. |
 | `~undistort_semantic` | `bool` | `false` | If true, undistort semantic images using CameraInfo distortion before projection (lidar mode only). |
+| `~use_geometric_gate` | `bool` | `true` | Ablation switch for the G5 geometric-reliability gate: when false, the gate still computes would-hit diagnostics but does not suppress or reject points. Active only when ~projection_geometric_enable is true. |

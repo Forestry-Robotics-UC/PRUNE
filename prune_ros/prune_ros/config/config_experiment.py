@@ -13,6 +13,7 @@ class ExperimentConfig:
     use_invalid_mask: bool
     use_depth_edge_rejection: bool
     use_occlusion_gate: bool
+    use_geometric_gate: bool
     experiment_variant_name: str
     experiment_bag_name: str
     results_dir: str
@@ -37,6 +38,7 @@ def load_experiment_config(node: Any) -> ExperimentConfig:
         use_invalid_mask=node._get_param_bool('~use_invalid_mask', True, 'Enable G1 invalid-mask evidence gate in experiment metrics and projector runtime.'),
         use_depth_edge_rejection=node._get_param_bool('~use_depth_edge_rejection', True, 'Enable G2 depth-edge evidence gate in experiment metrics and projector runtime.'),
         use_occlusion_gate=node._get_param_bool('~use_occlusion_gate', True, 'Enable G3 occlusion evidence gate in experiment metrics and projector runtime.'),
+        use_geometric_gate=node._get_param_bool('~use_geometric_gate', True, 'Enable G5 geometric-reliability evidence gate in experiment metrics and projector runtime (active only when ~projection_geometric_enable is true).'),
         experiment_variant_name=node._get_param_str('~experiment_variant_name', '', 'Optional experiment label recorded in metrics CSV outputs.', allow_empty=True),
         experiment_bag_name=node._get_param_str('~bag_name', '', 'Optional bag identifier recorded in metrics CSV outputs.', allow_empty=True),
         results_dir=node._get_param_str('~results_dir', '', 'Optional output directory for metrics/debug result bundles.', allow_empty=True),

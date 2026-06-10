@@ -27,6 +27,10 @@ from prune_core.colored_pcl.sampling import (
     sample_projected_label_patches,
     sample_projected_rgb_patches,
 )
+from prune_core.geometry import (
+    GeometricReliabilityParams,
+    evaluate_geometric_reliability,
+)
 from prune_core.projection.lidar_projection import project_points_to_image
 from prune_core.transforms.se3 import transform_points
 from prune_core.types import SemanticPointCloud
@@ -157,6 +161,12 @@ class ProjectionQualityResult:
     runtime_depth_edge_ms: float = 0.0
     runtime_occlusion_ms: float = 0.0
     projection_health_score: float = 0.0
+    geometric_reject: Optional[np.ndarray] = None
+    runtime_geometric_ms: float = 0.0
+    # Per-point enrichment computed by the geometric gate; available for
+    # future Tier 2 (per-point reliability state) export to ENTFAC-Mapping.
+    surface_normals: Optional[np.ndarray] = None
+    geometric_reliability: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -169,15 +179,18 @@ class GateMetrics:
     num_rejected_confidence: int = 0
     num_rejected_depth_edge: int = 0
     num_rejected_occlusion: int = 0
+    num_rejected_geometric: int = 0
     num_rejected_other: int = 0
     num_would_hit_invalid_mask: int = 0
     num_would_hit_depth_edge: int = 0
     num_would_fail_occlusion: int = 0
+    num_would_hit_geometric: int = 0
     runtime_projection_ms: float = 0.0
     runtime_mask_ms: float = 0.0
     runtime_rasterize_ms: float = 0.0
     runtime_depth_edge_ms: float = 0.0
     runtime_occlusion_ms: float = 0.0
+    runtime_geometric_ms: float = 0.0
     runtime_publish_ms: float = 0.0
     projection_health_score: float = 0.0
 
@@ -233,6 +246,17 @@ class LidarProjectorParams:
     use_invalid_mask: bool = True
     use_depth_edge_rejection: bool = True
     use_occlusion_gate: bool = True
+    use_geometric_gate: bool = True
+
+    # Geometric reliability gate (GLIM-inspired local surface cues; default off)
+    projection_geometric_enable: bool = False
+    geometric_k_neighbors: int = 12
+    geometric_radius_m: float = 0.5
+    geometric_min_neighbors: int = 5
+    geometric_curvature_max: float = 0.12
+    geometric_up_labels: Tuple[int, ...] = ()
+    geometric_up_max_angle_deg: float = 60.0
+    geometric_score_min: float = 0.0
     enable_adaptive_projection_health: bool = False
     projection_health_warn_threshold: float = 0.50
     projection_health_bad_threshold: float = 0.25
@@ -645,6 +669,8 @@ class LidarProjector:
             point_confidence=conf_in,
             points_cam_all=points_cam_all,
             points_selected_cam=points_selected_cam,
+            point_labels=labels_in,
+            up_lidar=self._up_in_lidar(target_T_lidar),
         )
         keep_semantics = quality.keep.copy()
 
@@ -669,9 +695,20 @@ class LidarProjector:
             if p.projection_occlusion_epsilon_m > 0.0 and p.use_occlusion_gate
             else 0
         )
+        metrics.num_would_hit_geometric = (
+            int(np.count_nonzero(quality.geometric_reject))
+            if quality.geometric_reject is not None
+            else 0
+        )
+        metrics.num_rejected_geometric = (
+            metrics.num_would_hit_geometric
+            if p.projection_geometric_enable and p.use_geometric_gate
+            else 0
+        )
         metrics.runtime_rasterize_ms = quality.runtime_rasterize_ms
         metrics.runtime_depth_edge_ms = quality.runtime_depth_edge_ms
         metrics.runtime_occlusion_ms = quality.runtime_occlusion_ms
+        metrics.runtime_geometric_ms = quality.runtime_geometric_ms
         metrics.projection_health_score = float(quality.projection_health_score)
 
         labels_in = labels_in.astype(np.int64, copy=False)
@@ -765,6 +802,7 @@ class LidarProjector:
             point_confidence=conf_in,
             points_cam_all=points_cam_all,
             points_selected_cam=points_selected_cam,
+            up_lidar=self._up_in_lidar(target_T_lidar),
         )
         keep_rgb = quality.keep.copy()
 
@@ -789,9 +827,20 @@ class LidarProjector:
             if p.projection_occlusion_epsilon_m > 0.0 and p.use_occlusion_gate
             else 0
         )
+        metrics.num_would_hit_geometric = (
+            int(np.count_nonzero(quality.geometric_reject))
+            if quality.geometric_reject is not None
+            else 0
+        )
+        metrics.num_rejected_geometric = (
+            metrics.num_would_hit_geometric
+            if p.projection_geometric_enable and p.use_geometric_gate
+            else 0
+        )
         metrics.runtime_rasterize_ms = quality.runtime_rasterize_ms
         metrics.runtime_depth_edge_ms = quality.runtime_depth_edge_ms
         metrics.runtime_occlusion_ms = quality.runtime_occlusion_ms
+        metrics.runtime_geometric_ms = quality.runtime_geometric_ms
 
         points_selected, _, conf_in, rgb_values_in = filter_invalid_projection_samples(
             ~keep_rgb,
@@ -832,6 +881,23 @@ class LidarProjector:
             rgb_all = rgb_values_in
 
         return cloud, rgb_all, metrics, depth_map, edge_map
+
+    # ------------------------------------------------------------------
+    # Geometric gate helpers
+    # ------------------------------------------------------------------
+
+    def _up_in_lidar(self, target_T_lidar: np.ndarray) -> Optional[np.ndarray]:
+        """Target-frame +z expressed in LiDAR coordinates.
+
+        Used by the semantic-normal consistency check; meaningful only when
+        the target frame is roughly gravity-aligned (odom/map/base), which
+        the parameter documentation states as a precondition.
+        """
+        if not self._p.projection_geometric_enable:
+            return None
+        return np.asarray(target_T_lidar, dtype=np.float64)[:3, :3].T @ np.array(
+            [0.0, 0.0, 1.0]
+        )
 
     # ------------------------------------------------------------------
     # Rolling-shutter-aware projection
@@ -924,11 +990,15 @@ class LidarProjector:
         point_confidence: Optional[np.ndarray],
         points_cam_all: Optional[np.ndarray] = None,
         points_selected_cam: Optional[np.ndarray] = None,
+        point_labels: Optional[np.ndarray] = None,
+        up_lidar: Optional[np.ndarray] = None,
     ) -> Tuple[ProjectionQualityResult, Optional[np.ndarray], Optional[np.ndarray]]:
-        """Compute occlusion, depth-edge, and confidence rejection masks.
+        """Compute occlusion, depth-edge, geometric, and confidence rejection masks.
 
         Returns ``(quality_result, depth_map, edge_map)`` where the maps are
-        ``None`` when the corresponding gates are disabled.
+        ``None`` when the corresponding gates are disabled. ``point_labels``
+        and ``up_lidar`` feed the optional semantic-normal consistency check
+        of the geometric reliability gate.
         """
         p = self._p
         u = np.asarray(u, dtype=np.int32).reshape(-1)
@@ -936,7 +1006,9 @@ class LidarProjector:
         keep = np.ones(u.shape[0], dtype=bool)
         empty = np.zeros(u.shape[0], dtype=bool)
         if keep.size == 0:
-            result = ProjectionQualityResult(keep, empty, empty, empty, None)
+            result = ProjectionQualityResult(
+                keep, empty, empty, empty, None, geometric_reject=empty
+            )
             return result, None, None
 
         runtime_rasterize_ms = 0.0
@@ -1070,6 +1142,44 @@ class LidarProjector:
             )
             runtime_depth_edge_ms = 1000.0 * (time.perf_counter() - _edge_t0)
 
+        # --- Geometric reliability gate (GLIM-inspired local surface cues) ---
+        runtime_geometric_ms = 0.0
+        geometric_reject = np.zeros(keep.shape[0], dtype=bool)
+        surface_normals: Optional[np.ndarray] = None
+        geometric_reliability: Optional[np.ndarray] = None
+        if p.projection_geometric_enable and points_selected.shape[0]:
+            _geo_t0 = time.perf_counter()
+            geo = evaluate_geometric_reliability(
+                points_selected,
+                params=GeometricReliabilityParams(
+                    k_neighbors=int(p.geometric_k_neighbors),
+                    radius_m=float(p.geometric_radius_m),
+                    min_neighbors=int(p.geometric_min_neighbors),
+                    curvature_max=float(p.geometric_curvature_max),
+                    up_labels=tuple(p.geometric_up_labels),
+                    up_max_angle_deg=float(p.geometric_up_max_angle_deg),
+                    score_min=float(p.geometric_score_min),
+                ),
+                reference_points=points_all,
+                labels=point_labels,
+                up_vector=up_lidar,
+            )
+            geometric_reject = geo.reject
+            surface_normals = geo.normals
+            geometric_reliability = geo.reliability
+            if p.use_geometric_gate:
+                keep &= ~geometric_reject
+            # Fold reliability into the confidence evidence only where the
+            # normal is valid; unestimable normals stay neutral instead of
+            # zeroing points through the confidence gate.
+            geo_conf = np.where(
+                geo.normal_valid, geo.reliability, 1.0
+            ).astype(np.float32, copy=False)
+            effective_conf = (
+                geo_conf if effective_conf is None else np.minimum(effective_conf, geo_conf)
+            )
+            runtime_geometric_ms = 1000.0 * (time.perf_counter() - _geo_t0)
+
         # --- Confidence gate ---
         confidence_reject = np.zeros(keep.shape[0], dtype=bool)
         if effective_confidence_min > 0.0 and effective_conf is not None:
@@ -1101,6 +1211,10 @@ class LidarProjector:
             runtime_depth_edge_ms=runtime_depth_edge_ms,
             runtime_occlusion_ms=runtime_occlusion_ms,
             projection_health_score=health_score,
+            geometric_reject=geometric_reject,
+            runtime_geometric_ms=runtime_geometric_ms,
+            surface_normals=surface_normals,
+            geometric_reliability=geometric_reliability,
         )
 
         # --- Overlay export ---

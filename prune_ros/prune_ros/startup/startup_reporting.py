@@ -211,6 +211,18 @@ class StartupReporter:
                 "projection_depth_edge_radius_px",
                 str(int(node.projection_depth_edge_radius_px)),
             ),
+            (
+                "projection_geometric_enable",
+                str(bool(node.projection_geometric_enable)),
+            ),
+            (
+                "geometric_curvature_max",
+                f"{node.geometric_curvature_max:.3f}",
+            ),
+            (
+                "geometric_up_labels",
+                ",".join(str(label) for label in node.geometric_up_labels) or "-",
+            ),
             ("overlay_output_dir", node.overlay_output_dir or "-"),
             ("overlay_output_stride", str(int(node.overlay_output_stride))),
             ("overlay_dot_radius", str(int(node.overlay_dot_radius))),

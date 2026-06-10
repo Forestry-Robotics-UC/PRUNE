@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Tuple
 
 from .config_helpers import get_float, get_int
+
+
+def _parse_label_list(raw: str, param_name: str) -> Tuple[int, ...]:
+    """Parse a comma-separated label-id string into a tuple of ints."""
+    items = [part.strip() for part in str(raw).split(',') if part.strip()]
+    try:
+        labels = tuple(int(part) for part in items)
+    except ValueError as exc:
+        raise ValueError(f'{param_name} must be a comma-separated list of integer label ids') from exc
+    if any(label < 0 for label in labels):
+        raise ValueError(f'{param_name} label ids must be >= 0')
+    return labels
 
 
 @dataclass
@@ -20,6 +32,14 @@ class GateConfig:
     projection_reject_depth_edges: bool
     projection_depth_edge_thresh: float
     projection_depth_edge_radius_px: int
+    projection_geometric_enable: bool
+    geometric_k_neighbors: int
+    geometric_radius_m: float
+    geometric_min_neighbors: int
+    geometric_curvature_max: float
+    geometric_up_labels: Tuple[int, ...]
+    geometric_up_max_angle_deg: float
+    geometric_score_min: float
     enable_adaptive_projection_health: bool
     projection_health_warn_threshold: float
     projection_health_bad_threshold: float
@@ -52,6 +72,14 @@ def load_gate_config(node: Any) -> GateConfig:
         projection_reject_depth_edges=node._get_param_bool('~projection_reject_depth_edges', False, 'Reject image transfer near strong LiDAR depth discontinuities.'),
         projection_depth_edge_thresh=get_float(node, '~projection_depth_edge_thresh', 0.15, 'Depth discontinuity threshold in meters/pixel for the depth-edge gate.', min_value=0.0),
         projection_depth_edge_radius_px=get_int(node, '~projection_depth_edge_radius_px', 0, 'Optional radius used to expand depth-edge rejection neighborhoods.', min_value=0),
+        projection_geometric_enable=node._get_param_bool('~projection_geometric_enable', False, 'Enable the GLIM-inspired geometric reliability gate (local surface normals, discontinuity, semantic-normal consistency).'),
+        geometric_k_neighbors=get_int(node, '~geometric_k_neighbors', 12, 'Neighbors per point for local surface-normal estimation in the geometric gate.', min_value=3),
+        geometric_radius_m=get_float(node, '~geometric_radius_m', 0.5, 'Neighbor distance cap in meters for the geometric gate normal estimation.', min_value=0.000001),
+        geometric_min_neighbors=get_int(node, '~geometric_min_neighbors', 5, 'Minimum in-radius neighbors required before a normal is trusted; sparser points are marked invalid, never guessed.', min_value=3),
+        geometric_curvature_max=get_float(node, '~geometric_curvature_max', 0.12, 'Surface-variation threshold above which a point counts as a 3D surface discontinuity (0 disables the check).', min_value=0.0, max_value=1.0),
+        geometric_up_labels=_parse_label_list(node._get_param_str('~geometric_up_labels', '', 'Comma-separated semantic label ids whose surfaces are expected to face up (terrain/trail); empty disables the semantic-normal consistency check. Requires a roughly gravity-aligned ~target_frame.', allow_empty=True), '~geometric_up_labels'),
+        geometric_up_max_angle_deg=get_float(node, '~geometric_up_max_angle_deg', 60.0, 'Maximum angle in degrees between the surface normal and target-frame up for ~geometric_up_labels points to count as consistent.', min_value=0.0, max_value=90.0),
+        geometric_score_min=get_float(node, '~geometric_score_min', 0.0, 'Geometric reliability score below which a valid point is rejected (0 disables the score criterion).', min_value=0.0, max_value=1.0),
         enable_adaptive_projection_health=node._get_param_bool('~enable_adaptive_projection_health', False, 'If true, make PRUNE projection gates more conservative when projection-health diagnostics are poor.'),
         projection_health_warn_threshold=get_float(node, '~projection_health_warn_threshold', 0.50, 'Projection-health score below this value is reported as warning quality.', min_value=0.0, max_value=1.0),
         projection_health_bad_threshold=get_float(node, '~projection_health_bad_threshold', 0.25, 'Projection-health score below this value is treated as bad for optional adaptive gates.', min_value=0.0, max_value=1.0),

@@ -49,11 +49,16 @@
   <arg name="use_invalid_mask" default=""/>
   <arg name="use_depth_edge_rejection" default=""/>
   <arg name="use_occlusion_gate" default=""/>
+  <arg name="use_geometric_gate" default=""/>
   <arg name="projection_patch_size" default=""/>
   <arg name="projection_confidence_min" default=""/>
   <arg name="projection_reject_depth_edges" default=""/>
   <arg name="projection_occlusion_epsilon_m" default=""/>
   <arg name="projection_occlusion_radius_px" default=""/>
+  <arg name="projection_geometric_enable" default=""/>
+  <arg name="geometric_curvature_max" default=""/>
+  <arg name="geometric_up_labels" default=""/>
+  <arg name="geometric_score_min" default=""/>
 
   <param name="use_sim_time" value="$(arg use_sim_time)"/>
 
@@ -176,5 +181,15 @@
            if="$(eval arg('projection_occlusion_epsilon_m') != '')"/>
     <param name="projection_occlusion_radius_px" value="$(arg projection_occlusion_radius_px)"
            if="$(eval arg('projection_occlusion_radius_px') != '')"/>
+    <param name="use_geometric_gate" value="$(arg use_geometric_gate)"
+           if="$(eval arg('use_geometric_gate') != '')"/>
+    <param name="projection_geometric_enable" value="$(arg projection_geometric_enable)"
+           if="$(eval arg('projection_geometric_enable') != '')"/>
+    <param name="geometric_curvature_max" value="$(arg geometric_curvature_max)"
+           if="$(eval arg('geometric_curvature_max') != '')"/>
+    <param name="geometric_up_labels" value="$(arg geometric_up_labels)"
+           if="$(eval arg('geometric_up_labels') != '')"/>
+    <param name="geometric_score_min" value="$(arg geometric_score_min)"
+           if="$(eval arg('geometric_score_min') != '')"/>
   </node>
 </launch>

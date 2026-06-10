@@ -64,6 +64,10 @@ SUMMARY_FIELDS = [
     "mean_projection_suppressed",
     "mean_projection_rejected",
     "mean_projection_accepted",
+    "mean_geometric_rejected",
+    "mean_would_hit_geometric",
+    "mean_runtime_geometric_ms",
+    "mean_projection_geometric_rejection_ratio",
 ]
 
 
@@ -113,6 +117,11 @@ class FrameMetrics:
     num_projection_suppressed: int = 0
     num_projection_rejected: int = 0
     num_projection_accepted: int = 0
+    num_rejected_geometric: int = 0
+    num_would_hit_geometric: int = 0
+    would_hit_geometric_ratio: float = 0.0
+    projection_geometric_rejection_ratio: float = 0.0
+    runtime_geometric_ms: float = 0.0
 
     @classmethod
     def fieldnames(cls) -> List[str]:
@@ -126,6 +135,7 @@ class FrameMetrics:
         row["would_hit_invalid_mask_ratio"] = float(self.num_would_hit_invalid_mask) / projected
         row["would_hit_depth_edge_ratio"] = float(self.num_would_hit_depth_edge) / projected
         row["would_fail_occlusion_ratio"] = float(self.num_would_fail_occlusion) / projected
+        row["would_hit_geometric_ratio"] = float(self.num_would_hit_geometric) / projected
         return row
 
 
@@ -218,6 +228,10 @@ def summarize_metrics_rows(rows: Sequence[Mapping[str, object]]) -> Dict[str, ob
         "mean_projection_suppressed": _mean_field(accepted, "num_projection_suppressed"),
         "mean_projection_rejected": _mean_field(accepted, "num_projection_rejected"),
         "mean_projection_accepted": _mean_field(accepted, "num_projection_accepted"),
+        "mean_geometric_rejected": _mean_field(accepted, "num_rejected_geometric"),
+        "mean_would_hit_geometric": _mean_field(accepted, "num_would_hit_geometric"),
+        "mean_runtime_geometric_ms": _mean_field(accepted, "runtime_geometric_ms"),
+        "mean_projection_geometric_rejection_ratio": _mean_field(accepted, "projection_geometric_rejection_ratio"),
     }
     return _round_summary(summary)
 
