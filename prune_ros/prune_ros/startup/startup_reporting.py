@@ -223,6 +223,10 @@ class StartupReporter:
                 "geometric_up_labels",
                 ",".join(str(label) for label in node.geometric_up_labels) or "-",
             ),
+            (
+                "geometric_fold_into_confidence",
+                str(bool(node.geometric_fold_into_confidence)),
+            ),
             ("overlay_output_dir", node.overlay_output_dir or "-"),
             ("overlay_output_stride", str(int(node.overlay_output_stride))),
             ("overlay_dot_radius", str(int(node.overlay_dot_radius))),

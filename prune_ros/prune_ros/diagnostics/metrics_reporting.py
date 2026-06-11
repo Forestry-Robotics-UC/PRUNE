@@ -45,6 +45,8 @@ class MetricsReporter:
         num_output_points: int,
         runtime_total_ms: float,
         runtime_publish_ms: float,
+        tracked_error_px: float = 0.0,
+        tracked_num_tracks: int = 0,
     ) -> None:
         if self._node._metrics_logger is None:
             return
@@ -134,6 +136,8 @@ class MetricsReporter:
                 would_hit_geometric_ratio=float(projection_metrics.num_would_hit_geometric) / max(projected, 1),
                 projection_geometric_rejection_ratio=projection_geometric_rejection_ratio,
                 runtime_geometric_ms=float(projection_metrics.runtime_geometric_ms),
+                tracked_reprojection_error_px=float(tracked_error_px),
+                num_tracked_reprojection_tracks=int(tracked_num_tracks),
             )
         )
 

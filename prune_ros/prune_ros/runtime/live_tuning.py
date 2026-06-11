@@ -20,6 +20,14 @@ TUNING_PARAMS = [
     ("projection_reject_depth_edges", bool, lambda v: isinstance(v, bool)),
     ("projection_depth_edge_thresh", float, lambda v: 0.0 <= v <= 1.0),
     ("projection_depth_edge_radius_px", int, lambda v: v >= 0),
+    ("use_invalid_mask", bool, lambda v: isinstance(v, bool)),
+    ("projection_invalid_mask_dilate_px", int, lambda v: v >= 0),
+    ("use_depth_edge_rejection", bool, lambda v: isinstance(v, bool)),
+    ("use_occlusion_gate", bool, lambda v: isinstance(v, bool)),
+    ("use_geometric_gate", bool, lambda v: isinstance(v, bool)),
+    ("projection_geometric_enable", bool, lambda v: isinstance(v, bool)),
+    ("geometric_curvature_max", float, lambda v: 0.0 <= v <= 1.0),
+    ("geometric_score_min", float, lambda v: 0.0 <= v <= 1.0),
     ("debug_project_lidar", bool, lambda v: isinstance(v, bool)),
     ("debug_project_lidar_stride", int, lambda v: v >= 1),
     ("debug_project_lidar_radius", int, lambda v: v >= 0),
@@ -95,6 +103,13 @@ class LiveTuningController:
         def log_fn(message: str) -> None:
             changes_logged.append(message)
 
+        tracked_attrs = [
+            name for name, _, _ in TUNING_PARAMS if name.startswith("tracked_reprojection_")
+        ]
+        tracked_before = {
+            name: getattr(self._node, name, None) for name in tracked_attrs
+        }
+
         changed = apply_tuning_params(self._node, get_value, log_fn if log_source else None)
 
         if self._node.debug_project_lidar and self._node._debug_proj_pub is None:
@@ -104,6 +119,15 @@ class LiveTuningController:
 
         if changed:
             self._node._projector.update_params(self._node._runtime_builders.build_projector_params(self._node))
+            # The tracker snapshots its params at build time, so live changes
+            # to tracked_reprojection_* only take effect through a rebuild.
+            # Rebuilding resets track state, so do it only when one of those
+            # params actually changed and the tracker is active.
+            if self._node._tracked_repr is not None and any(
+                getattr(self._node, name, None) != tracked_before[name]
+                for name in tracked_attrs
+            ):
+                self._node._tracked_repr = self._node._tracked_runtime.build()
             if self._node._debug_pub is not None:
                 self._node._debug_pub.update_params(self._node._runtime_builders.build_debug_pub_params(self._node))
             if log_source and changes_logged:
@@ -147,6 +171,8 @@ class LiveTuningController:
                 "projection_confidence_min",
                 "projection_occlusion_epsilon_m",
                 "projection_depth_edge_thresh",
+                "geometric_curvature_max",
+                "geometric_score_min",
                 "tracked_reprojection_fb_thresh_px",
                 "tracked_reprojection_depth_edge_thresh",
                 "tracked_reprojection_min_image_edge",
@@ -155,6 +181,7 @@ class LiveTuningController:
             if attr in {
                 "projection_occlusion_radius_px",
                 "projection_depth_edge_radius_px",
+                "projection_invalid_mask_dilate_px",
                 "debug_project_lidar_stride",
                 "debug_project_lidar_radius",
                 "tracked_reprojection_min_tracks",

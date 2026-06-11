@@ -22,6 +22,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from prune_core.utils.semantics import packed_rgb_to_triplets
 from prune_ros.projection.edge_maps import compute_image_edge_map
 
 _log = logging.getLogger(__name__)
@@ -159,7 +160,11 @@ class TrackedReprojection:
         px = np.clip(np.round(next_xy[:, 0]).astype(np.int32), 0, gray.shape[1] - 1)
         py = np.clip(np.round(next_xy[:, 1]).astype(np.int32), 0, gray.shape[0] - 1)
 
-        sem_edges = compute_image_edge_map(sem_img, sem_type)
+        # In rgb mode sem_img may be packed-float; base_rgb is already the
+        # unpacked uint8 image the edge map expects.
+        sem_edges = compute_image_edge_map(
+            base_rgb if sem_type == "rgb" else sem_img, sem_type
+        )
         img_edge_strength = np.asarray(sem_edges[py, px], dtype=np.float32)
         edge_keep = img_edge_strength >= float(self._p.min_image_edge)
         if np.any(edge_keep):
@@ -289,6 +294,11 @@ class TrackedReprojection:
             return np.stack((gray, gray, gray), axis=-1), gray
 
         rgb = np.asarray(sem_img)
+        if rgb.ndim == 2:
+            # RGB mode hands the tracker PRUNE's packed image (uint32
+            # r<<16|g<<8|b); unpack it to (H, W, 3) so feature tracking sees
+            # real intensities instead of an all-zero frame.
+            rgb = packed_rgb_to_triplets(rgb)
         if rgb.ndim != 3 or rgb.shape[2] < 3:
             h, w = rgb.shape[:2]
             return np.zeros((h, w, 3), dtype=np.uint8), np.zeros((h, w), dtype=np.uint8)

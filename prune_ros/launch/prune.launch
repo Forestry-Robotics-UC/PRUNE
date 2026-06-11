@@ -59,6 +59,7 @@
   <arg name="geometric_curvature_max" default=""/>
   <arg name="geometric_up_labels" default=""/>
   <arg name="geometric_score_min" default=""/>
+  <arg name="geometric_fold_into_confidence" default=""/>
 
   <param name="use_sim_time" value="$(arg use_sim_time)"/>
 
@@ -191,5 +192,7 @@
            if="$(eval arg('geometric_up_labels') != '')"/>
     <param name="geometric_score_min" value="$(arg geometric_score_min)"
            if="$(eval arg('geometric_score_min') != '')"/>
+    <param name="geometric_fold_into_confidence" value="$(arg geometric_fold_into_confidence)"
+           if="$(eval arg('geometric_fold_into_confidence') != '')"/>
   </node>
 </launch>

@@ -68,6 +68,8 @@ SUMMARY_FIELDS = [
     "mean_would_hit_geometric",
     "mean_runtime_geometric_ms",
     "mean_projection_geometric_rejection_ratio",
+    "mean_tracked_reprojection_error_px",
+    "num_tracked_reprojection_frames",
 ]
 
 
@@ -122,6 +124,9 @@ class FrameMetrics:
     would_hit_geometric_ratio: float = 0.0
     projection_geometric_rejection_ratio: float = 0.0
     runtime_geometric_ms: float = 0.0
+    # Tracked-reprojection diagnostic (0 tracks = no measurement this frame).
+    tracked_reprojection_error_px: float = 0.0
+    num_tracked_reprojection_tracks: int = 0
 
     @classmethod
     def fieldnames(cls) -> List[str]:
@@ -233,6 +238,17 @@ def summarize_metrics_rows(rows: Sequence[Mapping[str, object]]) -> Dict[str, ob
         "mean_runtime_geometric_ms": _mean_field(accepted, "runtime_geometric_ms"),
         "mean_projection_geometric_rejection_ratio": _mean_field(accepted, "projection_geometric_rejection_ratio"),
     }
+    # Tracked-reprojection error is only meaningful on frames where the
+    # tracker produced a measurement; average over those frames only.
+    tracked = [
+        row
+        for row in accepted
+        if int(_float(row, "num_tracked_reprojection_tracks")) > 0
+    ]
+    summary["mean_tracked_reprojection_error_px"] = _mean_field(
+        tracked, "tracked_reprojection_error_px"
+    )
+    summary["num_tracked_reprojection_frames"] = len(tracked)
     return _round_summary(summary)
 
 

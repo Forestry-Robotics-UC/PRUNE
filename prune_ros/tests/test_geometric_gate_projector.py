@@ -152,5 +152,64 @@ class TestGeometricGateEnabled(unittest.TestCase):
         self.assertGreater(result.metrics.num_would_hit_geometric, 0)
 
 
+class TestGeometricGateConfidenceFold(unittest.TestCase):
+    def _scatter(self):
+        rng = np.random.default_rng(5)
+        return rng.uniform(
+            low=(-1.0, -1.0, 4.0), high=(1.0, 1.0, 6.0), size=(4000, 3)
+        )
+
+    def test_suppression_mode_pure_with_active_confidence_gate(self):
+        # ~use_geometric_gate=false must be diagnostics-only even when the
+        # G4 confidence gate is active: reliability must not leak into the
+        # confidence evidence and change the output cloud.
+        scatter = self._scatter()
+        baseline = _run_projector(
+            LidarProjectorParams(projection_confidence_min=0.5), scatter
+        )
+        result = _run_projector(
+            LidarProjectorParams(
+                projection_confidence_min=0.5,
+                projection_geometric_enable=True,
+                use_geometric_gate=False,
+                geometric_radius_m=1.0,
+                geometric_curvature_max=0.12,
+            ),
+            scatter,
+        )
+        self.assertGreater(result.metrics.num_would_hit_geometric, 0)
+        self.assertEqual(result.metrics.num_rejected_geometric, 0)
+        self.assertEqual(
+            result.metrics.num_rejected_confidence,
+            baseline.metrics.num_rejected_confidence,
+        )
+        self.assertEqual(
+            result.cloud.points_xyz.shape[0],
+            baseline.cloud.points_xyz.shape[0],
+        )
+        self.assertEqual(
+            int(np.count_nonzero(result.cloud.labels < 0)),
+            int(np.count_nonzero(baseline.cloud.labels < 0)),
+        )
+
+    def test_fold_into_confidence_is_opt_in(self):
+        scatter = self._scatter()
+        common = dict(
+            projection_confidence_min=0.5,
+            projection_geometric_enable=True,
+            geometric_radius_m=1.0,
+            geometric_curvature_max=0.12,
+        )
+        without_fold = _run_projector(LidarProjectorParams(**common), scatter)
+        with_fold = _run_projector(
+            LidarProjectorParams(geometric_fold_into_confidence=True, **common),
+            scatter,
+        )
+        # Default: geometric reliability never feeds the confidence gate.
+        self.assertEqual(without_fold.metrics.num_rejected_confidence, 0)
+        # Opt-in: low-reliability points now also fail the confidence gate.
+        self.assertGreater(with_fold.metrics.num_rejected_confidence, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

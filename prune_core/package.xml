@@ -10,4 +10,8 @@
   <buildtool_depend>catkin</buildtool_depend>
 
   <exec_depend>python3-numpy</exec_depend>
+  <!-- scipy is used by prune_core.geometry for KD-tree neighbor search in the
+       G5 geometric reliability gate; without it the gate degrades to a
+       brute-force fallback for small clouds and stays inert for large ones. -->
+  <exec_depend>python3-scipy</exec_depend>
 </package>

@@ -212,6 +212,12 @@ class ProjectionResult:
     rgb_values: Optional[np.ndarray] = None
     debug_colors: Optional[np.ndarray] = None
     rolling_shutter_active: bool = False
+    # Gate-status overlay colors and matching pixel coordinates, both aligned
+    # to the `inside` (in-image) subset; populated only when
+    # debug_project_lidar is enabled. Consumers must not re-align these
+    # against points_fov.
+    gate_debug_colors: Optional[np.ndarray] = None
+    uv_inside: Optional[np.ndarray] = None
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +263,7 @@ class LidarProjectorParams:
     geometric_up_labels: Tuple[int, ...] = ()
     geometric_up_max_angle_deg: float = 60.0
     geometric_score_min: float = 0.0
+    geometric_fold_into_confidence: bool = False
     enable_adaptive_projection_health: bool = False
     projection_health_warn_threshold: float = 0.50
     projection_health_bad_threshold: float = 0.25
@@ -425,7 +432,7 @@ class LidarProjector:
 
         # --- Project + sample + quality mask -----------------------------
         rgb_lut = self._get_rgb_float_lut(labels)
-        cloud, rgb_values, proj_metrics, depth_map, edge_map, rs_active = (
+        cloud, rgb_values, proj_metrics, depth_map, edge_map, rs_active, gate_debug_colors, uv_inside = (
             self._project_and_sample(
                 points_fov,
                 points_cam_all,
@@ -455,6 +462,8 @@ class LidarProjector:
             rgb_values=rgb_values,
             debug_colors=debug_colors,
             rolling_shutter_active=rs_active,
+            gate_debug_colors=gate_debug_colors,
+            uv_inside=uv_inside,
         )
 
     # ------------------------------------------------------------------
@@ -561,7 +570,7 @@ class LidarProjector:
         )
 
         if labels is not None:
-            cloud, rgb_values, metrics, depth_map, edge_map = self._sample_labels(
+            cloud, rgb_values, metrics, depth_map, edge_map, gate_debug_colors = self._sample_labels(
                 points=points,
                 points_selected=points_selected,
                 points_cam_all=points_cam_all,
@@ -581,7 +590,7 @@ class LidarProjector:
                 metrics=metrics,
             )
         else:
-            cloud, rgb_values, metrics, depth_map, edge_map = self._sample_rgb(
+            cloud, rgb_values, metrics, depth_map, edge_map, gate_debug_colors = self._sample_rgb(
                 points=points,
                 points_selected=points_selected,
                 points_cam_all=points_cam_all,
@@ -603,7 +612,14 @@ class LidarProjector:
         if include_rgb and rgb_values is None and rgb_lut is not None:
             rgb_values = rgb_lut[_labels_to_uint16(cloud.labels)]
 
-        return cloud, rgb_values, metrics, depth_map, edge_map, rs_active
+        # Pixel coordinates aligned to the same in-bounds `inside` subset as
+        # gate_debug_colors (u/v are already bounds-filtered above).
+        uv_inside = (
+            np.stack([u, v], axis=1).astype(np.float64)
+            if gate_debug_colors is not None
+            else None
+        )
+        return cloud, rgb_values, metrics, depth_map, edge_map, rs_active, gate_debug_colors, uv_inside
 
     # ------------------------------------------------------------------
     # Labels path
@@ -644,7 +660,7 @@ class LidarProjector:
                 np.empty((0,), dtype=np.int64),
                 None,
             )
-            return empty_cloud, None, metrics, None, None
+            return empty_cloud, None, metrics, None, None, None
 
         labels_in, conf_in = sample_projected_label_patches(
             labels, u, v, confidence=confidence, patch_size=p.projection_patch_size
@@ -746,7 +762,18 @@ class LidarProjector:
                 points_target_labeled, labels_in.astype(np.int64), conf_in
             )
 
-        return cloud, None, metrics, depth_map, edge_map
+        gate_debug_colors = (
+            self._build_gate_debug_colors(
+                n=u.shape[0],
+                keep=quality.keep,
+                invalid_reject=invalid_reject,
+                depth_edge_reject=quality.depth_edge_reject,
+                occlusion_reject=quality.occlusion_reject,
+                geometric_reject=quality.geometric_reject,
+            )
+            if p.debug_project_lidar else None
+        )
+        return cloud, None, metrics, depth_map, edge_map, gate_debug_colors
 
     # ------------------------------------------------------------------
     # RGB path
@@ -880,7 +907,18 @@ class LidarProjector:
             cloud = SemanticPointCloud(points_in_t, labels_in, conf_in)
             rgb_all = rgb_values_in
 
-        return cloud, rgb_all, metrics, depth_map, edge_map
+        gate_debug_colors = (
+            self._build_gate_debug_colors(
+                n=u.shape[0],
+                keep=quality.keep,
+                invalid_reject=invalid_reject,
+                depth_edge_reject=quality.depth_edge_reject,
+                occlusion_reject=quality.occlusion_reject,
+                geometric_reject=quality.geometric_reject,
+            )
+            if p.debug_project_lidar else None
+        )
+        return cloud, rgb_all, metrics, depth_map, edge_map, gate_debug_colors
 
     # ------------------------------------------------------------------
     # Geometric gate helpers
@@ -1169,15 +1207,20 @@ class LidarProjector:
             geometric_reliability = geo.reliability
             if p.use_geometric_gate:
                 keep &= ~geometric_reject
-            # Fold reliability into the confidence evidence only where the
-            # normal is valid; unestimable normals stay neutral instead of
-            # zeroing points through the confidence gate.
-            geo_conf = np.where(
-                geo.normal_valid, geo.reliability, 1.0
-            ).astype(np.float32, copy=False)
-            effective_conf = (
-                geo_conf if effective_conf is None else np.minimum(effective_conf, geo_conf)
-            )
+            if p.geometric_fold_into_confidence and p.use_geometric_gate:
+                # Optional coupling (default off): fold reliability into the
+                # confidence evidence only where the normal is valid;
+                # unestimable normals stay neutral instead of zeroing points
+                # through the confidence gate. Kept behind its own flag, and
+                # inert in suppression mode (~use_geometric_gate=false), so
+                # the G5 ablation row isolates the geometric gate and
+                # suppression mode never changes the output cloud.
+                geo_conf = np.where(
+                    geo.normal_valid, geo.reliability, 1.0
+                ).astype(np.float32, copy=False)
+                effective_conf = (
+                    geo_conf if effective_conf is None else np.minimum(effective_conf, geo_conf)
+                )
             runtime_geometric_ms = 1000.0 * (time.perf_counter() - _geo_t0)
 
         # --- Confidence gate ---
@@ -1552,6 +1595,32 @@ class LidarProjector:
         flat = np.asarray(labels_img).reshape(-1)
         flat = flat[flat >= 0]
         return 0 if flat.size == 0 else int(flat.max()) + 1
+
+    @staticmethod
+    def _build_gate_debug_colors(
+        n: int,
+        keep: np.ndarray,
+        invalid_reject: np.ndarray,
+        depth_edge_reject: np.ndarray,
+        occlusion_reject: np.ndarray,
+        geometric_reject: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Per-point gate-status colours for the live debug overlay.
+
+        Priority (last write wins): accepted=green, geometric (G5)=cyan,
+        occlusion (G3)=magenta, depth-edge (G2)=orange, invalid-mask
+        (G1)=red. The reject masks are would-hit masks, so suppressed gates
+        still show their hits in the overlay.
+        """
+        colors = np.full((n, 3), 60, dtype=np.uint8)
+        truly_accepted = keep & ~invalid_reject
+        colors[truly_accepted] = (0, 255, 0)
+        if geometric_reject is not None and geometric_reject.shape[0] == n:
+            colors[geometric_reject] = (0, 255, 255)
+        colors[occlusion_reject] = (255, 0, 255)
+        colors[depth_edge_reject] = (255, 165, 0)
+        colors[invalid_reject] = (255, 0, 0)
+        return colors
 
     @staticmethod
     def _depth_to_debug_colors(depths: np.ndarray) -> Optional[np.ndarray]:

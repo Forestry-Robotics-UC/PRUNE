@@ -26,7 +26,17 @@ class TrackedReprojectionRuntime:
             min_image_edge=float(self._node.tracked_reprojection_min_image_edge),
             log_period_sec=float(self._node.tracked_reprojection_log_period_sec),
         )
-        self._tracker = TrackedReprojection(params, self._node._ensure_cv2)
+        # TrackedReprojection expects a zero-argument provider that returns
+        # the cv2 module (or raises). The node's _ensure_cv2(context) returns
+        # a bool and caches the module on node._cv2, so adapt it here.
+        node = self._node
+
+        def _cv2_provider():
+            if not node._ensure_cv2("tracked_reprojection"):
+                raise RuntimeError("OpenCV unavailable for tracked reprojection")
+            return node._cv2
+
+        self._tracker = TrackedReprojection(params, _cv2_provider)
         return self._tracker
 
     def update(self, *, sem_img, sem_type: str, depth_map, depth_edges):

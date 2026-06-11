@@ -236,8 +236,13 @@ class LidarFusionPipeline:
         if self._node._debug_pub is not None:
             if self._node.debug_project_lidar:
                 base_rgb = np.stack([(labels.astype(np.int32) % 256).astype(np.uint8)] * 3, axis=-1) if labels is not None else packed_rgb_to_triplets(packed_img)
-                uv, _ = project_points_to_image(points, intrinsics, corrected_camera_T_lidar, (image_shape[1], image_shape[0]))
-                self._node._diagnostics.publish_lidar_projection(base_rgb, image_shape, uv, sem_msg.header, colors_u8=debug_colors)
+                if proj_result.gate_debug_colors is not None and proj_result.uv_inside is not None:
+                    uv = proj_result.uv_inside
+                    colors_u8 = proj_result.gate_debug_colors
+                else:
+                    uv, _ = project_points_to_image(points, intrinsics, corrected_camera_T_lidar, (image_shape[1], image_shape[0]))
+                    colors_u8 = debug_colors
+                self._node._diagnostics.publish_lidar_projection(base_rgb, image_shape, uv, sem_msg.header, colors_u8=colors_u8)
             if self._node.debug_publish_fov_points and points.shape[0]:
                 self._node._diagnostics.publish_fov_points(points, lidar_msg.header.frame_id, lidar_msg.header.stamp)
         return _LidarFrameResult(pcl=pcl, debug_colors=debug_colors, image_shape=image_shape, points=points, rgb_values=rgb_values, gate_metrics=gate_metrics, corrected_camera_T_lidar=corrected_camera_T_lidar, depth_map=proj_result.depth_map, edge_map=proj_result.edge_map, num_input_points=num_input_points)
@@ -249,6 +254,7 @@ class LidarFusionPipeline:
             dmap = lidar_result.depth_map if lidar_result.depth_map is not None else self._node._projector._rasterize_depth_map(lidar_result.points, intrinsics, lidar_result.corrected_camera_T_lidar, (h, w))
             emap = lidar_result.edge_map if lidar_result.edge_map is not None else self._node._projector._depth_to_edge_map(dmap)
             self._node._diagnostics.publish_range_view(depth_map=dmap, edge_map=emap, sem_img=semantic_debug_img, sem_type=semantic_debug_type, u=np.arange(w, dtype=np.int32), v=np.arange(h, dtype=np.int32), point_confidence=None, header=sem_msg.header)
+        tracked = None
         if self._node._tracked_repr is not None and semantic_debug_img is not None:
             dmap = lidar_result.depth_map if lidar_result.depth_map is not None else self._node._projector._rasterize_depth_map(lidar_result.points, intrinsics, lidar_result.corrected_camera_T_lidar, (h, w))
             emap = lidar_result.edge_map if lidar_result.edge_map is not None else self._node._projector._depth_to_edge_map(dmap)
@@ -265,7 +271,7 @@ class LidarFusionPipeline:
             self._node._logged_lidar_summary = True
         def post_publish(publish_ms: float) -> None:
             lidar_result.gate_metrics.runtime_publish_ms = publish_ms
-            self._node._metrics_reporter.write_lidar_metrics(frame_index=frame_index, sem_msg=sem_msg, lidar_msg=lidar_msg, pair_dt_sec=pair_dt_sec, pair_accepted=1, drop_reason='none', num_input_points=lidar_result.num_input_points, projection_metrics=lidar_result.gate_metrics, num_output_points=int(lidar_result.pcl.points_xyz.shape[0]), runtime_total_ms=1000.0 * (time.perf_counter() - t0), runtime_publish_ms=publish_ms)
+            self._node._metrics_reporter.write_lidar_metrics(frame_index=frame_index, sem_msg=sem_msg, lidar_msg=lidar_msg, pair_dt_sec=pair_dt_sec, pair_accepted=1, drop_reason='none', num_input_points=lidar_result.num_input_points, projection_metrics=lidar_result.gate_metrics, num_output_points=int(lidar_result.pcl.points_xyz.shape[0]), runtime_total_ms=1000.0 * (time.perf_counter() - t0), runtime_publish_ms=publish_ms, tracked_error_px=float(tracked.error_px) if tracked is not None else 0.0, tracked_num_tracks=int(tracked.num_tracks) if tracked is not None else 0)
             self._node._debug_callback_seq += 1
         return PipelineResult(cloud=lidar_result.pcl, stamp=stamp, frame_id=self._node.target_frame, callback_sec=time.perf_counter() - t0, debug={'include_rgb': include_rgb, 'rgb_values': lidar_result.rgb_values, 'rgb_lut': rgb_lut, 'post_publish': post_publish})
 

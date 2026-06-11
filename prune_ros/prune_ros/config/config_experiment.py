@@ -55,6 +55,6 @@ def load_calibration_config(node: Any) -> CalibrationConfig:
         tracked_reprojection_min_tracks=get_int(node, '~tracked_reprojection_min_tracks', 20, 'Minimum active tracks before the tracked reprojection diagnostic resets.', min_value=10),
         tracked_reprojection_fb_thresh_px=get_float(node, '~tracked_reprojection_fb_thresh_px', 1.0, 'Forward-backward pixel error threshold for tracked reprojection.', min_value=0.0),
         tracked_reprojection_depth_edge_thresh=get_float(node, '~tracked_reprojection_depth_edge_thresh', 0.15, 'Depth-edge threshold reused by tracked reprojection diagnostics.', min_value=0.0),
-        tracked_reprojection_min_image_edge=get_float(node, '~tracked_reprojection_min_image_edge', 3.0, 'Minimum image-edge margin for tracked reprojection features.', min_value=0.0),
+        tracked_reprojection_min_image_edge=get_float(node, '~tracked_reprojection_min_image_edge', 0.05, 'Minimum normalized image-edge strength in [0,1] required for a tracked feature to contribute to the reprojection error metric.', min_value=0.0, max_value=1.0),
         tracked_reprojection_log_period_sec=get_float(node, '~tracked_reprojection_log_period_sec', 2.0, 'Minimum seconds between tracked reprojection log messages.', min_value=0.0),
     )

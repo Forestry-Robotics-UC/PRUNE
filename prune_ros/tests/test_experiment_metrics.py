@@ -233,6 +233,41 @@ class ExperimentMetricsTests(unittest.TestCase):
             self.assertEqual(rows[0]["Would-hit invalid mask/frame"], "6.000")
             self.assertEqual(rows[1]["Invalid-mask rejected/frame"], "5.000")
 
+    def test_tracked_reprojection_summary_uses_measured_frames_only(self):
+        from prune_ros.diagnostics.experiment_metrics import summarize_metrics_rows
+
+        rows = [
+            FrameMetrics(
+                bag_name="bag_a",
+                variant_name="full",
+                pair_accepted=1,
+                tracked_reprojection_error_px=2.0,
+                num_tracked_reprojection_tracks=40,
+            ).to_row(),
+            FrameMetrics(
+                bag_name="bag_a",
+                variant_name="full",
+                pair_accepted=1,
+                tracked_reprojection_error_px=4.0,
+                num_tracked_reprojection_tracks=10,
+            ).to_row(),
+            # Tracker reset frame: no measurement, must not dilute the mean.
+            FrameMetrics(
+                bag_name="bag_a",
+                variant_name="full",
+                pair_accepted=1,
+                tracked_reprojection_error_px=0.0,
+                num_tracked_reprojection_tracks=0,
+            ).to_row(),
+        ]
+
+        summary = summarize_metrics_rows(rows)
+
+        self.assertEqual(summary["num_tracked_reprojection_frames"], 2)
+        self.assertAlmostEqual(
+            float(summary["mean_tracked_reprojection_error_px"]), 3.0, places=6
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,21 @@ tracked_reprojection_depth_edge_thresh: 0.10 # normalized LiDAR depth-edge thres
 tracked_reprojection_min_image_edge: 0.08   # minimum image-edge strength required for a tracked feature to affect the metric
 tracked_reprojection_log_period_sec: 2.0    # seconds between tracked reprojection status logs (0 logs every callback)
 
+# G5 geometric reliability gate (GLIM-inspired local surface cues). Off by default;
+# behavior is unchanged unless projection_geometric_enable is set. Needs scipy for
+# KD-tree neighbor search on large clouds (brute-force fallback up to 4096 points,
+# otherwise the gate stays inert).
+projection_geometric_enable: false   # master switch for the G5 geometric reliability gate
+use_geometric_gate: true             # ablation switch: false = would-hit diagnostics only, output unchanged
+geometric_k_neighbors: 12            # neighbors per point for local surface-normal estimation
+geometric_radius_m: 0.5              # neighbor distance cap in meters (LiDAR frame)
+geometric_min_neighbors: 5           # minimum in-radius neighbors before a normal is trusted; sparser points stay valid-unknown
+geometric_curvature_max: 0.12        # surface-variation threshold marking a 3D discontinuity (0 disables)
+geometric_up_labels: ""              # comma-separated label ids expected to face up (terrain/trail); empty disables the semantic-normal check
+geometric_up_max_angle_deg: 60.0     # max angle between unsigned normal and target-frame up for up-label consistency
+geometric_score_min: 0.0             # reliability score below which a valid point is rejected (0 disables)
+geometric_fold_into_confidence: false # if true, min-combine reliability into the G4 confidence evidence (keep off for clean G5 ablations)
+
 # RT optimisations for depth-map rasterization and edge detection.
 depth_map_subsample: 1         # 1=full-res (default), 2=half-res, 4=quarter-res depth buffer
 edge_cache_max_age_sec: 0.0    # 0=recompute every frame; 0.1=reuse for 2 frames at 20 Hz

@@ -34,6 +34,7 @@ def build_projector_params(node: Any) -> LidarProjectorParams:
         geometric_up_labels=tuple(node.geometric_up_labels),
         geometric_up_max_angle_deg=float(node.geometric_up_max_angle_deg),
         geometric_score_min=float(node.geometric_score_min),
+        geometric_fold_into_confidence=bool(node.geometric_fold_into_confidence),
         enable_adaptive_projection_health=bool(node.enable_adaptive_projection_health),
         projection_health_warn_threshold=float(node.projection_health_warn_threshold),
         projection_health_bad_threshold=float(node.projection_health_bad_threshold),

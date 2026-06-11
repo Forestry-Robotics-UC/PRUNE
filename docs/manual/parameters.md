@@ -8,6 +8,10 @@ python docs/tools/extract_ros_params.py > docs/manual/parameters.md
 
 Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/config/expert.yaml`, then overridden by launch-time params when set.
 
+Evidence gate numbering used throughout the docs and parameter descriptions: G1 is invalid-mask rejection (`~use_invalid_mask`), G2 is depth-edge rejection (`~use_depth_edge_rejection`), G3 is occlusion consistency (`~use_occlusion_gate`), G4 is confidence thresholding (`~projection_confidence_min`), and G5 is the geometric reliability gate (`~projection_geometric_enable` with the `~use_geometric_gate` ablation switch).
+
+The G5 geometric reliability gate uses scipy (`scipy.spatial.cKDTree`) for neighbor search. Without scipy it falls back to a brute-force search for clouds up to 4096 reference points; for larger clouds it logs one warning, marks all normals invalid, and stays inert.
+
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `~camera_frame` | `str` | `''` | Optional camera frame override used when ~camera_info_txt does not include frame_id. |
@@ -37,6 +41,7 @@ Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/co
 | `~enable_profiling` | `bool` | `false` | If true, print a short cProfile summary per callback (future C++/numba profiling hook). |
 | `~filter_invalid_depth` | `bool` | `true` | If true, treat common uint16 depth sentinels (0, 65535) as invalid before scaling. |
 | `~geometric_curvature_max` | `float` | `0.12` | Surface-variation threshold above which a point counts as a 3D surface discontinuity in the geometric reliability gate (0 disables the check). |
+| `~geometric_fold_into_confidence` | `bool` | `false` | If true, min-combine the G5 geometric reliability score into the G4 confidence evidence. Off by default so the G5 ablation row isolates the geometric gate; inert when ~use_geometric_gate is false. |
 | `~geometric_k_neighbors` | `int` | `12` | Neighbors per point for local surface-normal estimation in the geometric reliability gate. |
 | `~geometric_min_neighbors` | `int` | `5` | Minimum in-radius neighbors required before a normal is trusted; sparser points are marked invalid and never rejected. |
 | `~geometric_radius_m` | `float` | `0.5` | Neighbor distance cap in meters for geometric-gate normal estimation, evaluated in the LiDAR frame. |
@@ -103,9 +108,9 @@ Defaults are primarily defined in `prune_ros/config/core.yaml` and `prune_ros/co
 | `~tracked_reprojection_log_period_sec` | `float` | `2.0` | Minimum seconds between tracked reprojection status logs. |
 | `~tracked_reprojection_max_corners` | `int` | `300` | Maximum number of tracked image features used by the tracked reprojection diagnostic. |
 | `~tracked_reprojection_min_distance_px` | `float` | `8.0` | Minimum pixel spacing between tracked reprojection features. |
-| `~tracked_reprojection_min_image_edge` | `float` | `0.05` | Minimum image-edge strength required for a tracked feature to contribute to the reprojection error metric. |
+| `~tracked_reprojection_min_image_edge` | `float` | `0.05` | Minimum normalized image-edge strength in [0,1] required for a tracked feature to contribute to the reprojection error metric. |
 | `~tracked_reprojection_min_tracks` | `int` | `80` | Minimum number of active tracks to maintain before replenishing features. |
 | `~tracked_reprojection_quality_level` | `float` | `0.01` | Shi-Tomasi quality level for tracked reprojection feature detection. |
 | `~undistort_alpha` | `float` | `0.0` | Undistort balance/alpha in [0,1]; 0=crop to valid pixels, 1=keep all pixels. |
 | `~undistort_semantic` | `bool` | `false` | If true, undistort semantic images using CameraInfo distortion before projection (lidar mode only). |
-| `~use_geometric_gate` | `bool` | `true` | Ablation switch for the G5 geometric-reliability gate: when false, the gate still computes would-hit diagnostics but does not suppress or reject points. Active only when ~projection_geometric_enable is true. |
+| `~use_geometric_gate` | `bool` | `true` | Ablation switch for the G5 geometric-reliability gate: when false, the gate only computes would-hit diagnostics and never alters the output cloud (the optional ~geometric_fold_into_confidence coupling is also disabled). Active only when ~projection_geometric_enable is true. |

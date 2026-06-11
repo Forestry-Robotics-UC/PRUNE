@@ -17,6 +17,14 @@ class MockNode:
         self.projection_reject_depth_edges = False
         self.projection_depth_edge_thresh = 0.1
         self.projection_depth_edge_radius_px = 3
+        self.use_invalid_mask = True
+        self.projection_invalid_mask_dilate_px = 0
+        self.use_depth_edge_rejection = True
+        self.use_occlusion_gate = True
+        self.use_geometric_gate = True
+        self.projection_geometric_enable = False
+        self.geometric_curvature_max = 0.12
+        self.geometric_score_min = 0.0
         self.debug_project_lidar = False
         self.debug_project_lidar_stride = 5
         self.debug_project_lidar_radius = 2
@@ -189,6 +197,14 @@ class TestApplyTuningParams:
             "projection_reject_depth_edges",
             "projection_depth_edge_thresh",
             "projection_depth_edge_radius_px",
+            "use_invalid_mask",
+            "projection_invalid_mask_dilate_px",
+            "use_depth_edge_rejection",
+            "use_occlusion_gate",
+            "use_geometric_gate",
+            "projection_geometric_enable",
+            "geometric_curvature_max",
+            "geometric_score_min",
             "debug_project_lidar",
             "debug_project_lidar_stride",
             "debug_project_lidar_radius",
@@ -225,6 +241,30 @@ class TestApplyTuningParams:
         assert node.projection_patch_size == 3
         assert node.projection_confidence_min == 0.7
         assert node.debug_project_lidar is True
+
+    def test_gate_toggles_apply(self):
+        """Gate switches (G1-G3, G5) propagate through live tuning."""
+        node = MockNode()
+
+        def get_value(attr, default):
+            overrides = {
+                "use_invalid_mask": False,
+                "use_occlusion_gate": False,
+                "projection_geometric_enable": True,
+                "geometric_score_min": 0.4,
+            }
+            return overrides.get(attr, default)
+
+        changed = apply_tuning_params(node, get_value)
+
+        assert changed is True
+        assert node.use_invalid_mask is False
+        assert node.use_occlusion_gate is False
+        assert node.projection_geometric_enable is True
+        assert node.geometric_score_min == 0.4
+        # Untouched switches keep their defaults.
+        assert node.use_depth_edge_rejection is True
+        assert node.use_geometric_gate is True
 
     def test_integration_rospy_get_param_flow(self):
         """Simulate rospy.get_param update flow."""
