@@ -1,0 +1,34 @@
+<launch>
+  <!-- v1.0 minimal ROS integration test:
+       - node starts with static extrinsics (no TF)
+       - publishes a semantic point cloud after one input frame -->
+
+  <param name="use_sim_time" value="false"/>
+
+  <node pkg="prune_ros" type="prune_node.py" name="prune_node" output="screen">
+    <param name="debug" value="false"/>
+    <param name="core_debug" value="false"/>
+    <param name="mode" value="depth"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="semantic_topic" value="/test/semantic_labels"/>
+    <param name="camera_info" value="/test/camera_info"/>
+    <param name="depth_input_topic" value="/test/depth"/>
+    <param name="semantic_input_type" value="labels"/>
+    <param name="include_unlabeled" value="false"/>
+    <param name="colorize_labels" value="false"/>
+    <param name="downsample_factor" value="1"/>
+    <param name="depth_scale" value="1.0"/>
+    <param name="status_period" value="0.0"/>
+    <param name="ply_output_dir" value="/tmp/prune_ros_test/ply"/>
+    <rosparam param="static_target_T_depth">
+      [1,0,0,0,
+       0,1,0,0,
+       0,0,1,0,
+       0,0,0,1]
+    </rosparam>
+  </node>
+
+  <test test-name="test_prune_node" pkg="prune_ros"
+        type="test_prune_node.py" time-limit="10.0"/>
+</launch>
+

@@ -1,0 +1,41 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Local operator guidance
+AGENTS.md
+
+# Python virtualenv
+.venv/
+venv/
+
+# pytest cache
+.pytest_cache/
+
+# ROS logs
+log/
+
+# catkin / colcon
+build/
+devel/
+install/
+.catkin_tools/
+
+# Output folder
+output/
+/results/
+
+# ForestSphere local overlays and dataset-specific launch/config files.
+prune_ros/config/forestsphere/
+prune_ros/launch/forestsphere/
+
+.vscode
+
+.venv*/
+.runtime/
+
+# Local ops guide (machine-specific paths, not for commit)
+agents.md
+
+# Claude Code memory/settings
+.claude/
