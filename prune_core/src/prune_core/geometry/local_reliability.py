@@ -44,7 +44,7 @@ try:
 except ImportError:
     _cKDTree = None
 
-LOGGER = logging.getLogger(__name__)
+_LOG = logging.getLogger(__name__)
 
 # Brute-force neighbor search is quadratic; only allow it for small clouds
 # (tests, degraded environments without scipy).
@@ -161,7 +161,7 @@ def _neighbor_indices(
         return idx.astype(np.int64, copy=False), valid
 
     if not _warned_no_neighbor_backend:
-        LOGGER.warning(
+        _LOG.warning(
             "geometric reliability: scipy is unavailable and the reference "
             "cloud has %d points (> %d brute-force cap); all normals will "
             "be marked invalid and the gate stays inert",

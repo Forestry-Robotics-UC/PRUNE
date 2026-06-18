@@ -2,6 +2,4 @@
 
 from .prune_node import PruneNode, main
 
-ColoredPclNode = PruneNode
-
-__all__ = ["PruneNode", "ColoredPclNode", "main"]
+__all__ = ["PruneNode", "main"]

@@ -4,7 +4,7 @@ All notable changes to PRUNE are documented in this file.
 
 This project follows Semantic Versioning for release tags.
 
-## Unreleased
+## 1.1.1
 
 ### Added
 - GLIM-inspired geometric reliability gate (off by default, behavior-preserving):

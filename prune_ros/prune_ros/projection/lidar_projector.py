@@ -17,19 +17,14 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 from prune_core.colored_pcl.sampling import (
     sample_projected_label_patches,
     sample_projected_rgb_patches,
-)
-from prune_core.geometry import (
-    GeometricReliabilityParams,
-    evaluate_geometric_reliability,
 )
 from prune_core.projection.lidar_projection import project_points_to_image
 from prune_core.transforms.se3 import transform_points
@@ -40,8 +35,11 @@ from prune_core.utils.masks import (
     sample_invalid_mask,
 )
 from prune_core.utils.semantics import packed_rgb_to_triplets
-from .gate_utils import query_neighborhood_reduce
+from . import colorize
+from .depth_rasterize import depth_to_edge_map, range_image_depth_map, rasterize_depth_map
+from .quality_gates import compute_quality_mask, projection_health_from_counts
 from .results_overlays import save_frame_overlays
+from .types import GateMetrics, LidarProjectorParams, ProjectionQualityResult, ProjectionResult
 
 # ---------------------------------------------------------------------------
 # Jet-reversed depth LUT: index 0 = red (near 0 m), index 255 = blue (far).
@@ -69,226 +67,7 @@ _JET_REV_LUT: np.ndarray = np.clip(
 # Keep in sync with pc2.py if either changes.
 
 
-def _labels_to_uint16(labels: np.ndarray) -> np.ndarray:
-    labels_arr = np.asarray(labels)
-    if labels_arr.ndim != 1:
-        labels_arr = labels_arr.reshape(-1)
-    if labels_arr.dtype.kind not in ("i", "u"):
-        raise ValueError("labels must be an integer array")
-    if np.any(labels_arr > 65535):
-        raise ValueError("label must fit into uint16 (0..65535)")
-    if labels_arr.dtype.kind == "u":
-        return labels_arr.astype(np.uint16, copy=False)
-    labels_u16 = labels_arr.astype(np.uint16, copy=True)
-    neg_mask = labels_arr < 0
-    if np.any(neg_mask):
-        labels_u16[neg_mask] = 65535
-    return labels_u16
-
-
-def __build_label_rgb_float_lut(
-    *,
-    color_map=None,
-    num_labels: Optional[int] = None,
-    seed: int = 1,
-) -> np.ndarray:
-    labels = np.arange(65536, dtype=np.uint32)
-    packed = np.zeros_like(labels, dtype=np.uint32)
-
-    def _hash_palette(ids: np.ndarray) -> np.ndarray:
-        r = (ids * 37) & 0xFF
-        g = (ids * 17) & 0xFF
-        b = (ids * 73) & 0xFF
-        return (r << 16) | (g << 8) | b
-
-    if num_labels is not None:
-        n = int(num_labels)
-        rng = np.random.default_rng(int(seed))
-        pal = rng.integers(0, 256, size=(n, 3), dtype=np.uint32)
-        packed[:n] = (pal[:, 0] << 16) | (pal[:, 1] << 8) | pal[:, 2]
-        if n < 65536:
-            packed[n:] = _hash_palette(labels[n:])
-    else:
-        packed[:] = _hash_palette(labels)
-
-    packed[65535] = 0xFFFFFF
-    if color_map:
-        for label_id, rgb in color_map.items():
-            if not (0 <= int(label_id) <= 65535):
-                continue
-            if not isinstance(rgb, (list, tuple)) or len(rgb) != 3:
-                continue
-            rr, gg, bb = int(rgb[0]), int(rgb[1]), int(rgb[2])
-            packed[int(label_id)] = ((rr & 0xFF) << 16) | ((gg & 0xFF) << 8) | (bb & 0xFF)
-
-    return packed.astype("<u4", copy=False).view("<f4")
-
-_log = logging.getLogger(__name__)
-
-
-
-def projection_health_from_counts(
-    *,
-    total_points: int,
-    in_front_points: int,
-    projected_points: int,
-    rejection_ratio: float,
-) -> float:
-    """Conservative [0, 1] projection-health proxy from projection/gate counts."""
-    total = max(int(total_points), 1)
-    in_front = max(int(in_front_points), 0)
-    projected = max(int(projected_points), 0)
-    in_front_ratio = float(np.clip(in_front / float(total), 0.0, 1.0))
-    in_image_ratio = float(np.clip(projected / float(max(in_front, 1)), 0.0, 1.0))
-    rejection_term = 1.0 - float(np.clip(rejection_ratio, 0.0, 1.0))
-    return float(np.clip(in_front_ratio * in_image_ratio * rejection_term, 0.0, 1.0))
-
-# ---------------------------------------------------------------------------
-# Public dataclasses
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ProjectionQualityResult:
-    """Per-point quality gate results for one frame."""
-
-    keep: np.ndarray
-    confidence_reject: np.ndarray
-    depth_edge_reject: np.ndarray
-    occlusion_reject: np.ndarray
-    depth_edge_map: Optional[np.ndarray]
-    runtime_rasterize_ms: float = 0.0
-    runtime_depth_edge_ms: float = 0.0
-    runtime_occlusion_ms: float = 0.0
-    projection_health_score: float = 0.0
-    geometric_reject: Optional[np.ndarray] = None
-    runtime_geometric_ms: float = 0.0
-    # Per-point enrichment computed by the geometric gate; available for
-    # future Tier 2 (per-point reliability state) export to ENTFAC-Mapping.
-    surface_normals: Optional[np.ndarray] = None
-    geometric_reliability: Optional[np.ndarray] = None
-
-
-@dataclass
-class GateMetrics:
-    """Counters and runtimes for one projection frame."""
-
-    num_points_in_front: int = 0
-    num_points_projected_in_image: int = 0
-    num_rejected_invalid_mask: int = 0
-    num_rejected_confidence: int = 0
-    num_rejected_depth_edge: int = 0
-    num_rejected_occlusion: int = 0
-    num_rejected_geometric: int = 0
-    num_rejected_other: int = 0
-    num_would_hit_invalid_mask: int = 0
-    num_would_hit_depth_edge: int = 0
-    num_would_fail_occlusion: int = 0
-    num_would_hit_geometric: int = 0
-    runtime_projection_ms: float = 0.0
-    runtime_mask_ms: float = 0.0
-    runtime_rasterize_ms: float = 0.0
-    runtime_depth_edge_ms: float = 0.0
-    runtime_occlusion_ms: float = 0.0
-    runtime_geometric_ms: float = 0.0
-    runtime_publish_ms: float = 0.0
-    projection_health_score: float = 0.0
-
-
-@dataclass
-class ProjectionResult:
-    """All outputs of a single :meth:`LidarProjector.process_frame` call."""
-
-    cloud: SemanticPointCloud
-    metrics: GateMetrics
-    image_shape: Tuple[int, int]
-    # FOV-gated points in their original frames (for calibration and debug)
-    points_fov: np.ndarray          # LiDAR frame, shape (M, 3)
-    points_cam_all: np.ndarray      # camera frame, shape (M, 3)
-    # Optional outputs populated when corresponding gates are enabled
-    depth_map: Optional[np.ndarray] = None
-    edge_map: Optional[np.ndarray] = None
-    # Optional outputs for debug publishers
-    rgb_values: Optional[np.ndarray] = None
-    debug_colors: Optional[np.ndarray] = None
-    rolling_shutter_active: bool = False
-    # Gate-status overlay colors and matching pixel coordinates, both aligned
-    # to the `inside` (in-image) subset; populated only when
-    # debug_project_lidar is enabled. Consumers must not re-align these
-    # against points_fov.
-    gate_debug_colors: Optional[np.ndarray] = None
-    uv_inside: Optional[np.ndarray] = None
-
-
-# ---------------------------------------------------------------------------
-# Parameter dataclass
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class LidarProjectorParams:
-    """All parameters consumed by :class:`LidarProjector`.
-
-    Build from node parameters; pass to the constructor or :meth:`update_params`.
-    """
-
-    # FOV gate
-    max_depth_m: Optional[float] = None
-    camera_fov_gate_enable: bool = True
-    camera_fov_gate_margin_deg: float = 5.0
-
-    # Projection
-    rolling_shutter_enable: bool = False
-    rolling_shutter_direction: str = "top_to_bottom"
-    projection_patch_size: int = 1
-
-    # Quality gates
-    projection_occlusion_epsilon_m: float = 0.0
-    projection_occlusion_radius_px: int = 0
-    projection_reject_depth_edges: bool = False
-    projection_depth_edge_thresh: float = 0.15
-    projection_depth_edge_radius_px: int = 0
-    projection_confidence_min: float = 0.0
-    use_invalid_mask: bool = True
-    use_depth_edge_rejection: bool = True
-    use_occlusion_gate: bool = True
-    use_geometric_gate: bool = True
-
-    # Geometric reliability gate (GLIM-inspired local surface cues; default off)
-    projection_geometric_enable: bool = False
-    geometric_k_neighbors: int = 12
-    geometric_radius_m: float = 0.5
-    geometric_min_neighbors: int = 5
-    geometric_curvature_max: float = 0.12
-    geometric_up_labels: Tuple[int, ...] = ()
-    geometric_up_max_angle_deg: float = 60.0
-    geometric_score_min: float = 0.0
-    geometric_fold_into_confidence: bool = False
-    enable_adaptive_projection_health: bool = False
-    projection_health_warn_threshold: float = 0.50
-    projection_health_bad_threshold: float = 0.25
-    adaptive_confidence_threshold_offset: float = 0.10
-    adaptive_depth_edge_threshold_scale: float = 0.80
-    adaptive_prefer_suppression_on_bad_health: bool = True
-
-    # RT optimisations
-    depth_map_subsample: int = 1       # 1=full-res, 2=half-res, 4=quarter-res depth buffer
-    edge_cache_max_age_sec: float = 0.0  # 0=recompute every frame; >0=reuse edge map within window
-    use_range_image_edges: str = "auto"  # "auto"=use when cloud is organized, "always", "never"
-
-    # Overlay export (results_overlays.py format — compatible with make_gimp_layers.py)
-    overlay_output_dir: str = ""       # empty = disabled
-    overlay_output_stride: int = 20    # save every Nth accepted frame
-    overlay_dot_radius: int = 2
-
-    # Semantics / output
-    include_unlabeled: bool = False
-    colorize_labels: bool = False
-    semantic_input_type: str = "labels"
-    color_map: Dict = field(default_factory=dict)
-    random_color_seed: int = 1
-    num_labels: int = 0
-    debug_project_lidar: bool = False
+_LOG = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +191,7 @@ class LidarProjector:
 
         # --- Debug depth colours -----------------------------------------
         debug_colors = (
-            self._depth_to_debug_colors(points_cam_all[:, 2]) if p.debug_project_lidar else None
+            colorize.depth_to_debug_colors(points_cam_all[:, 2]) if p.debug_project_lidar else None
         )
 
         # --- Determine image shape ---------------------------------------
@@ -610,7 +389,7 @@ class LidarProjector:
             )
 
         if include_rgb and rgb_values is None and rgb_lut is not None:
-            rgb_values = rgb_lut[_labels_to_uint16(cloud.labels)]
+            rgb_values = rgb_lut[colorize.labels_to_uint16(cloud.labels)]
 
         # Pixel coordinates aligned to the same in-bounds `inside` subset as
         # gate_debug_colors (u/v are already bounds-filtered above).
@@ -763,7 +542,7 @@ class LidarProjector:
             )
 
         gate_debug_colors = (
-            self._build_gate_debug_colors(
+            colorize.build_gate_debug_colors(
                 n=u.shape[0],
                 keep=quality.keep,
                 invalid_reject=invalid_reject,
@@ -908,7 +687,7 @@ class LidarProjector:
             rgb_all = rgb_values_in
 
         gate_debug_colors = (
-            self._build_gate_debug_colors(
+            colorize.build_gate_debug_colors(
                 n=u.shape[0],
                 keep=quality.keep,
                 invalid_reject=invalid_reject,
@@ -1037,233 +816,43 @@ class LidarProjector:
         ``None`` when the corresponding gates are disabled. ``point_labels``
         and ``up_lidar`` feed the optional semantic-normal consistency check
         of the geometric reliability gate.
+
+        Thin adapter: the gate math lives in :func:`quality_gates.compute_quality_mask`
+        as a free function; this method supplies the per-frame context and
+        persistent buffers/cache that instance owns, and stores the updated
+        edge-map cache back.
         """
-        p = self._p
-        u = np.asarray(u, dtype=np.int32).reshape(-1)
-        v = np.asarray(v, dtype=np.int32).reshape(-1)
-        keep = np.ones(u.shape[0], dtype=bool)
-        empty = np.zeros(u.shape[0], dtype=bool)
-        if keep.size == 0:
-            result = ProjectionQualityResult(
-                keep, empty, empty, empty, None, geometric_reject=empty
+        result, depth_map, edge_map, self._cached_edge_map, self._cached_edge_stamp = (
+            compute_quality_mask(
+                self._p,
+                points_all=points_all,
+                points_selected=points_selected,
+                intrinsics=intrinsics,
+                camera_T_lidar=camera_T_lidar,
+                image_shape=image_shape,
+                u=u,
+                v=v,
+                point_confidence=point_confidence,
+                points_cam_all=points_cam_all,
+                points_selected_cam=points_selected_cam,
+                point_labels=point_labels,
+                up_lidar=up_lidar,
+                frame_cloud_height=self._frame_cloud_height,
+                frame_cloud_width=self._frame_cloud_width,
+                frame_points_all_cam=self._frame_points_all_cam,
+                frame_stamp=self._frame_stamp,
+                cached_edge_map=self._cached_edge_map,
+                cached_edge_stamp=self._cached_edge_stamp,
+                rasterize_depth_map=self._rasterize_depth_map,
+                range_image_depth_map=self._range_image_depth_map,
+                depth_to_edge_map=self._depth_to_edge_map,
             )
-            return result, None, None
-
-        runtime_rasterize_ms = 0.0
-        depth_map = None
-        s = max(1, int(p.depth_map_subsample))  # opt 1: subsample factor
-        h_img, w_img = image_shape
-        sh, sw = h_img // s, w_img // s
-
-        if p.projection_occlusion_epsilon_m > 0.0 or p.projection_reject_depth_edges:
-            _rast_t0 = time.perf_counter()
-
-            # Opt 3: structured LiDAR range-image path avoids full-res rasterization.
-            _ch = getattr(self, '_frame_cloud_height', 0)
-            _cw = getattr(self, '_frame_cloud_width', 0)
-            _pts_all_cam = getattr(self, '_frame_points_all_cam', None)
-            _use_ri = p.use_range_image_edges
-            _is_org = _ch > 1 and _cw > 0 and _pts_all_cam is not None
-            _want_ri = (_use_ri == "always") or (_use_ri == "auto" and _is_org)
-
-            if _want_ri and _pts_all_cam is not None:
-                depth_map = self._range_image_depth_map(
-                    _pts_all_cam, _ch, _cw, (sh, sw),
-                )
-            else:
-                depth_map = self._rasterize_depth_map(
-                    points_all, intrinsics, camera_T_lidar, (sh, sw),
-                    points_cam=points_cam_all,
-                )
-            runtime_rasterize_ms = 1000.0 * (time.perf_counter() - _rast_t0)
-
-        # Subsampled UV coordinates used for all depth-buffer queries.
-        us = (u // s).clip(0, sw - 1) if s > 1 else u
-        vs = (v // s).clip(0, sh - 1) if s > 1 else v
-
-        effective_conf = (
-            np.asarray(point_confidence, dtype=np.float32).reshape(-1)
-            if point_confidence is not None else None
-        )
-
-        pre_health = projection_health_from_counts(
-            total_points=int(points_all.shape[0]),
-            in_front_points=(
-                int(np.count_nonzero(points_cam_all[:, 2] > 0.0))
-                if points_cam_all is not None and points_cam_all.shape[0]
-                else int(points_selected.shape[0])
-            ),
-            projected_points=int(u.shape[0]),
-            rejection_ratio=0.0,
-        )
-        adaptive_bad = bool(
-            p.enable_adaptive_projection_health
-            and pre_health < float(p.projection_health_bad_threshold)
-        )
-        effective_confidence_min = float(p.projection_confidence_min)
-        effective_depth_edge_thresh = float(p.projection_depth_edge_thresh)
-        if adaptive_bad:
-            effective_confidence_min = min(
-                1.0,
-                effective_confidence_min + float(p.adaptive_confidence_threshold_offset),
-            )
-            effective_depth_edge_thresh = float(
-                np.clip(
-                    effective_depth_edge_thresh * float(p.adaptive_depth_edge_threshold_scale),
-                    0.0,
-                    1.0,
-                )
-            )
-
-        # --- Occlusion gate ---
-        runtime_occlusion_ms = 0.0
-        occlusion_reject = np.zeros(keep.shape[0], dtype=bool)
-        if p.projection_occlusion_epsilon_m > 0.0 and depth_map is not None:
-            _occ_t0 = time.perf_counter()
-            point_depth = (
-                np.asarray(points_selected_cam[:, 2], dtype=np.float32)
-                if points_selected_cam is not None
-                else np.asarray(
-                    transform_points(camera_T_lidar, points_selected)[:, 2],
-                    dtype=np.float32,
-                )
-            )
-            nearest_depth = query_neighborhood_reduce(
-                depth_map, us, vs, p.projection_occlusion_radius_px, "min"
-            )
-            depth_margin = np.asarray(point_depth - nearest_depth, dtype=np.float32)
-            occlusion_reject = (
-                ~np.isfinite(nearest_depth)
-                | (depth_margin > float(p.projection_occlusion_epsilon_m))
-            )
-            if p.use_occlusion_gate:
-                keep &= ~occlusion_reject
-            occ_conf = np.clip(
-                1.0 - np.maximum(depth_margin, 0.0) / float(p.projection_occlusion_epsilon_m),
-                0.0, 1.0,
-            ).astype(np.float32, copy=False)
-            effective_conf = (
-                occ_conf if effective_conf is None else np.minimum(effective_conf, occ_conf)
-            )
-            runtime_occlusion_ms = 1000.0 * (time.perf_counter() - _occ_t0)
-
-        # --- Depth-edge gate ---
-        edge_map = None
-        runtime_depth_edge_ms = 0.0
-        depth_edge_reject = np.zeros(keep.shape[0], dtype=bool)
-        if p.projection_reject_depth_edges and depth_map is not None:
-            _edge_t0 = time.perf_counter()
-            # Opt 2: reuse cached edge map if within max age window.
-            _stamp = getattr(self, '_frame_stamp', 0.0)
-            _max_age = float(p.edge_cache_max_age_sec)
-            _cache_valid = (
-                _max_age > 0.0
-                and self._cached_edge_map is not None
-                and abs(_stamp - self._cached_edge_stamp) < _max_age
-                and self._cached_edge_map.shape == depth_map.shape
-            )
-            if _cache_valid:
-                edge_map = self._cached_edge_map
-            else:
-                edge_map = self._depth_to_edge_map(depth_map)
-                self._cached_edge_map = edge_map
-                self._cached_edge_stamp = _stamp
-            edge_values = query_neighborhood_reduce(
-                edge_map, us, vs, p.projection_depth_edge_radius_px, "max"
-            )
-            depth_edge_reject = edge_values >= effective_depth_edge_thresh
-            if p.use_depth_edge_rejection:
-                keep &= ~depth_edge_reject
-            edge_conf = np.clip(1.0 - edge_values, 0.0, 1.0).astype(np.float32, copy=False)
-            effective_conf = (
-                edge_conf if effective_conf is None else np.minimum(effective_conf, edge_conf)
-            )
-            runtime_depth_edge_ms = 1000.0 * (time.perf_counter() - _edge_t0)
-
-        # --- Geometric reliability gate (GLIM-inspired local surface cues) ---
-        runtime_geometric_ms = 0.0
-        geometric_reject = np.zeros(keep.shape[0], dtype=bool)
-        surface_normals: Optional[np.ndarray] = None
-        geometric_reliability: Optional[np.ndarray] = None
-        if p.projection_geometric_enable and points_selected.shape[0]:
-            _geo_t0 = time.perf_counter()
-            geo = evaluate_geometric_reliability(
-                points_selected,
-                params=GeometricReliabilityParams(
-                    k_neighbors=int(p.geometric_k_neighbors),
-                    radius_m=float(p.geometric_radius_m),
-                    min_neighbors=int(p.geometric_min_neighbors),
-                    curvature_max=float(p.geometric_curvature_max),
-                    up_labels=tuple(p.geometric_up_labels),
-                    up_max_angle_deg=float(p.geometric_up_max_angle_deg),
-                    score_min=float(p.geometric_score_min),
-                ),
-                reference_points=points_all,
-                labels=point_labels,
-                up_vector=up_lidar,
-            )
-            geometric_reject = geo.reject
-            surface_normals = geo.normals
-            geometric_reliability = geo.reliability
-            if p.use_geometric_gate:
-                keep &= ~geometric_reject
-            if p.geometric_fold_into_confidence and p.use_geometric_gate:
-                # Optional coupling (default off): fold reliability into the
-                # confidence evidence only where the normal is valid;
-                # unestimable normals stay neutral instead of zeroing points
-                # through the confidence gate. Kept behind its own flag, and
-                # inert in suppression mode (~use_geometric_gate=false), so
-                # the G5 ablation row isolates the geometric gate and
-                # suppression mode never changes the output cloud.
-                geo_conf = np.where(
-                    geo.normal_valid, geo.reliability, 1.0
-                ).astype(np.float32, copy=False)
-                effective_conf = (
-                    geo_conf if effective_conf is None else np.minimum(effective_conf, geo_conf)
-                )
-            runtime_geometric_ms = 1000.0 * (time.perf_counter() - _geo_t0)
-
-        # --- Confidence gate ---
-        confidence_reject = np.zeros(keep.shape[0], dtype=bool)
-        if effective_confidence_min > 0.0 and effective_conf is not None:
-            if effective_conf.shape[0] == keep.shape[0]:
-                confidence_reject = effective_conf < effective_confidence_min
-                keep &= ~confidence_reject
-
-        active_rejection_ratio = 0.0
-        if keep.shape[0] > 0:
-            active_rejection_ratio = float(np.count_nonzero(~keep)) / float(keep.shape[0])
-        health_score = projection_health_from_counts(
-            total_points=int(points_all.shape[0]),
-            in_front_points=(
-                int(np.count_nonzero(points_cam_all[:, 2] > 0.0))
-                if points_cam_all is not None and points_cam_all.shape[0]
-                else int(points_selected.shape[0])
-            ),
-            projected_points=int(u.shape[0]),
-            rejection_ratio=active_rejection_ratio,
-        )
-
-        result = ProjectionQualityResult(
-            keep=keep,
-            confidence_reject=confidence_reject,
-            depth_edge_reject=depth_edge_reject,
-            occlusion_reject=occlusion_reject,
-            depth_edge_map=edge_map,
-            runtime_rasterize_ms=runtime_rasterize_ms,
-            runtime_depth_edge_ms=runtime_depth_edge_ms,
-            runtime_occlusion_ms=runtime_occlusion_ms,
-            projection_health_score=health_score,
-            geometric_reject=geometric_reject,
-            runtime_geometric_ms=runtime_geometric_ms,
-            surface_normals=surface_normals,
-            geometric_reliability=geometric_reliability,
         )
 
         # --- Overlay export ---
         self._maybe_save_overlays(
             u=u, v=v,
-            keep=keep,
+            keep=result.keep,
             points_selected_cam=points_selected_cam,
             image_shape=image_shape,
         )
@@ -1295,8 +884,7 @@ class LidarProjector:
         try:
             import cv2
         except ImportError:
-            _log.warning(
-                "overlay_export",
+            _LOG.warning(
                 "cv2 is not available; overlay PNG export is disabled. Install python3-opencv in the runtime image to enable %s.",
                 p.overlay_output_dir,
             )
@@ -1389,53 +977,15 @@ class LidarProjector:
     ) -> np.ndarray:
         """Fill a per-pixel min-depth buffer from projected LiDAR points.
 
-        Uses a sort-based reduceat pattern for better cache locality than
-        ``np.minimum.at``.  The buffer is pre-allocated and reused across
-        frames to eliminate per-frame malloc overhead.
-
-        Args:
-            points_cam: if provided, skips the ``transform_points`` call
-                (caller has already computed camera-frame coordinates).
+        Thin adapter over :func:`depth_rasterize.rasterize_depth_map`; owns
+        the persistent reuse buffer and stores it back after the call.
         """
-        h, w = int(image_shape[0]), int(image_shape[1])
-        shape = (h, w)
-        if self._depth_buffer is None or self._depth_buffer_shape != shape:
-            self._depth_buffer = np.empty(shape, dtype=np.float32)
-            self._depth_buffer_shape = shape
-        self._depth_buffer.fill(np.inf)
-        depth = self._depth_buffer
-
-        if points_cam is None:
-            points_cam = transform_points(camera_T_lidar, points)
-        z = points_cam[:, 2]
-        in_front = z > 0.0
-        if not np.any(in_front):
-            return depth
-
-        pts = points_cam[in_front]
-        z = z[in_front]
-        fx, fy = intrinsics[0, 0], intrinsics[1, 1]
-        cx, cy = intrinsics[0, 2], intrinsics[1, 2]
-        u = (pts[:, 0] * fx / z + cx).astype(np.int32, copy=False)
-        v = (pts[:, 1] * fy / z + cy).astype(np.int32, copy=False)
-        inside = (u >= 0) & (u < w) & (v >= 0) & (v < h)
-        if not np.any(inside):
-            return depth
-
-        u = u[inside]
-        v = v[inside]
-        z = z[inside].astype(np.float32, copy=False)
-
-        idx = v * w + u
-        sort_order = np.argsort(idx)
-        idx_sorted = idx[sort_order]
-        z_sorted = z[sort_order]
-        segment_starts = np.concatenate(([0], np.where(np.diff(idx_sorted) != 0)[0] + 1))
-        min_values = np.minimum.reduceat(z_sorted, segment_starts)
-        unique_idx = idx_sorted[segment_starts]
-        flat = depth.ravel()
-        flat[unique_idx] = np.minimum(flat[unique_idx], min_values)
-        return flat.reshape(h, w)
+        depth, self._depth_buffer, self._depth_buffer_shape = rasterize_depth_map(
+            points, intrinsics, camera_T_lidar, image_shape,
+            self._depth_buffer, self._depth_buffer_shape,
+            points_cam=points_cam,
+        )
+        return depth
 
     # ------------------------------------------------------------------
     # Structured LiDAR: range-image depth map (opt 3)
@@ -1450,52 +1000,16 @@ class LidarProjector:
     ) -> np.ndarray:
         """Build a min-depth buffer from an organized point cloud's range image.
 
-        Operates in ring/column space (O(H_lidar * W_lidar) ~= 131K for a 128-beam
-        Ouster) rather than camera-image space (O(H_cam * W_cam) ~= 2.76M for MAPIR
-        1440p).  Resolution-agnostic: cost does not grow with camera resolution.
-
-        Args:
-            points_all_cam: (cloud_height * cloud_width, 3) all points in camera
-                frame, including those outside the FOV.
-            out_shape: (sh, sw) output buffer shape — (H//s, W//s) for subsample s.
+        Thin adapter over :func:`depth_rasterize.range_image_depth_map`; owns
+        the persistent reuse buffer and stores it back after the call.
         """
-        sh, sw = out_shape
-        if self._depth_buffer is None or self._depth_buffer_shape != (sh, sw):
-            self._depth_buffer = np.empty((sh, sw), dtype=np.float32)
-            self._depth_buffer_shape = (sh, sw)
-        self._depth_buffer.fill(np.inf)
-        depth = self._depth_buffer
-
-        z_all = points_all_cam[:, 2]
-        in_front = z_all > 0.0
-        if not np.any(in_front):
-            return depth
-
-        # Project all valid ring/col points to (subsampled) camera UV.
-        intrinsics = self._last_intrinsics  # cached below in process_frame
-        if intrinsics is None:
-            return depth
-
-        pts = points_all_cam[in_front]
-        z = z_all[in_front]
-        fx, fy = float(intrinsics[0, 0]), float(intrinsics[1, 1])
-        cx, cy = float(intrinsics[0, 2]), float(intrinsics[1, 2])
-        u = (pts[:, 0] * fx / z + cx).astype(np.int32, copy=False) // max(1, self._current_subsample)
-        v = (pts[:, 1] * fy / z + cy).astype(np.int32, copy=False) // max(1, self._current_subsample)
-        inside = (u >= 0) & (u < sw) & (v >= 0) & (v < sh)
-        if not np.any(inside):
-            return depth
-
-        u, v, z = u[inside], v[inside], z[inside].astype(np.float32, copy=False)
-        idx = v * sw + u
-        sort_order = np.argsort(idx)
-        idx_sorted = idx[sort_order]
-        z_sorted = z[sort_order]
-        seg_starts = np.concatenate(([0], np.where(np.diff(idx_sorted) != 0)[0] + 1))
-        min_vals = np.minimum.reduceat(z_sorted, seg_starts)
-        flat = depth.ravel()
-        flat[idx_sorted[seg_starts]] = np.minimum(flat[idx_sorted[seg_starts]], min_vals)
-        return flat.reshape(sh, sw)
+        depth, self._depth_buffer, self._depth_buffer_shape = range_image_depth_map(
+            points_all_cam, cloud_height, cloud_width, out_shape,
+            self._depth_buffer, self._depth_buffer_shape,
+            self._last_intrinsics,  # cached in process_frame
+            self._current_subsample,
+        )
+        return depth
 
     # ------------------------------------------------------------------
     # Sparse depth-edge map (persistent buffer)
@@ -1504,51 +1018,12 @@ class LidarProjector:
     def _depth_to_edge_map(self, depth_map: np.ndarray) -> np.ndarray:
         """Compute a normalised depth-gradient edge map.
 
-        Works in sparse pixel coordinates (~1-2% occupancy from a single
-        LiDAR scan) to avoid computing ``inf − inf = nan`` over millions of
-        empty pixels at high resolutions.
-
-        The edge value for pixel ``(r, c)`` is the maximum absolute depth
-        difference with its valid 4-connected neighbours, normalised by the
-        global maximum edge value in the frame.
-
-        Note on the scatter pattern: ``np.maximum(a[idx], b, out=a[idx])``
-        silently discards writes because fancy indexing returns a copy.
-        The correct pattern is to compute the result first, then scatter.
+        Thin adapter over :func:`depth_rasterize.depth_to_edge_map`; owns
+        the persistent reuse buffer and stores it back after the call.
         """
-        depth_map = np.asarray(depth_map, dtype=np.float32)
-        h, w = depth_map.shape
-        if self._edge_buffer is None or self._edge_buffer_shape != (h, w):
-            self._edge_buffer = np.empty((h, w), dtype=np.float32)
-            self._edge_buffer_shape = (h, w)
-        self._edge_buffer.fill(0.0)
-        edges = self._edge_buffer
-
-        vy, vx = np.nonzero(np.isfinite(depth_map) & (depth_map > 0.0))
-        if vy.size == 0:
-            return edges
-
-        # Horizontal pairs → attribute edge to the right pixel.
-        r_ok = vx < (w - 1)
-        yr, xr = vy[r_ok], vx[r_ok]
-        rn_ok = np.isfinite(depth_map[yr, xr + 1]) & (depth_map[yr, xr + 1] > 0.0)
-        if rn_ok.any():
-            yy, xx = yr[rn_ok], xr[rn_ok]
-            edges[yy, xx + 1] = np.abs(depth_map[yy, xx] - depth_map[yy, xx + 1])
-
-        # Vertical pairs → take max with any horizontal edge already written.
-        b_ok = vy < (h - 1)
-        yb, xb = vy[b_ok], vx[b_ok]
-        bn_ok = np.isfinite(depth_map[yb + 1, xb]) & (depth_map[yb + 1, xb] > 0.0)
-        if bn_ok.any():
-            yy, xx = yb[bn_ok], xb[bn_ok]
-            edges[yy + 1, xx] = np.maximum(
-                edges[yy + 1, xx], np.abs(depth_map[yy, xx] - depth_map[yy + 1, xx])
-            )
-
-        max_val = float(np.max(edges))
-        if max_val > 0.0:
-            edges /= max_val
+        edges, self._edge_buffer, self._edge_buffer_shape = depth_to_edge_map(
+            depth_map, self._edge_buffer, self._edge_buffer_shape,
+        )
         return edges
 
     # ------------------------------------------------------------------
@@ -1565,78 +1040,23 @@ class LidarProjector:
 
         if p.color_map:
             if self._rgb_lut is None or self._rgb_lut_num_labels != -1:
-                self._rgb_lut = _build_label_rgb_float_lut(color_map=p.color_map)
+                self._rgb_lut = colorize.build_label_rgb_float_lut(color_map=p.color_map)
                 self._rgb_lut_num_labels = -1
             return self._rgb_lut
 
         n: Optional[int] = int(p.num_labels) if int(p.num_labels) > 0 else None
         if n is None and labels_img is not None:
-            n = self._infer_num_labels(labels_img)
+            n = colorize.infer_num_labels(labels_img)
         if n is None or n <= 0:
             n = 256
         if self._rgb_lut is None or self._rgb_lut_num_labels != n:
-            self._rgb_lut = _build_label_rgb_float_lut(num_labels=n, seed=int(p.random_color_seed))
+            self._rgb_lut = colorize.build_label_rgb_float_lut(num_labels=n, seed=int(p.random_color_seed))
             self._rgb_lut_num_labels = n
             if not self._warned_random_palette:
-                _log.warning(
+                _LOG.warning(
                     "colorize_labels is true but color_map is empty; using deterministic "
                     "random palette (num_labels=%d seed=%d). Provide color_map for stable colors.",
                     n, int(p.random_color_seed),
                 )
                 self._warned_random_palette = True
         return self._rgb_lut
-
-    # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _infer_num_labels(labels_img: np.ndarray) -> int:
-        flat = np.asarray(labels_img).reshape(-1)
-        flat = flat[flat >= 0]
-        return 0 if flat.size == 0 else int(flat.max()) + 1
-
-    @staticmethod
-    def _build_gate_debug_colors(
-        n: int,
-        keep: np.ndarray,
-        invalid_reject: np.ndarray,
-        depth_edge_reject: np.ndarray,
-        occlusion_reject: np.ndarray,
-        geometric_reject: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        """Per-point gate-status colours for the live debug overlay.
-
-        Priority (last write wins): accepted=green, geometric (G5)=cyan,
-        occlusion (G3)=magenta, depth-edge (G2)=orange, invalid-mask
-        (G1)=red. The reject masks are would-hit masks, so suppressed gates
-        still show their hits in the overlay.
-        """
-        colors = np.full((n, 3), 60, dtype=np.uint8)
-        truly_accepted = keep & ~invalid_reject
-        colors[truly_accepted] = (0, 255, 0)
-        if geometric_reject is not None and geometric_reject.shape[0] == n:
-            colors[geometric_reject] = (0, 255, 255)
-        colors[occlusion_reject] = (255, 0, 255)
-        colors[depth_edge_reject] = (255, 165, 0)
-        colors[invalid_reject] = (255, 0, 0)
-        return colors
-
-    @staticmethod
-    def _depth_to_debug_colors(depths: np.ndarray) -> Optional[np.ndarray]:
-        """Map per-point depth values to a red-to-blue colour gradient."""
-        if depths is None or depths.size == 0:
-            return None
-        depths = np.asarray(depths, dtype=np.float32).reshape(-1)
-        valid = np.isfinite(depths) & (depths > 0)
-        if not np.any(valid):
-            return None
-        dmin = float(np.nanmin(depths[valid]))
-        dmax = float(np.nanpercentile(depths[valid], 95))
-        if dmax <= dmin:
-            dmax = dmin + 1e-3
-        t = np.clip((depths - dmin) / (dmax - dmin), 0.0, 1.0)
-        r = ((1.0 - t) * 255.0).astype(np.uint8, copy=False)  # near=red
-        g = np.zeros_like(r)
-        b = (t * 255.0).astype(np.uint8, copy=False)           # far=blue
-        return np.stack((r, g, b), axis=-1)
